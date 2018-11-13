@@ -1,0 +1,12 @@
+[package]
+name = "syncbox"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[workspace]
+
+[features]
+"fuzz" = ["syncbox-fuzz"]
+
+[dependencies]
+"syncbox-fuzz" = { version = "0.1.0", path = "syncbox-fuzz", optional = true }

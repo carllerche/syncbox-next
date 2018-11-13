@@ -1,0 +1,8 @@
+[package]
+name = "syncbox-fuzz"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+
+[dependencies]
+fringe = { git = "https://github.com/carllerche/libfringe", branch = "track-nightly" }
+scoped-mut-tls = { version = "0.1.0", git = "http://github.com/carllerche/scoped-mut-tls" }

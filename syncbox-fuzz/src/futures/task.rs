@@ -1,3 +1,7 @@
+pub fn current() -> Task {
+    unimplemented!();
+}
+
 pub struct Task {
 }
 

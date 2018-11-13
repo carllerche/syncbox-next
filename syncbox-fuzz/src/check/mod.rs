@@ -1,6 +1,6 @@
 use rt;
 
-pub fn check<F: Fn() + 'static>(f: F)
+pub fn fuzz<F: Fn() + 'static>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
@@ -14,7 +14,7 @@ pub use self::futures::*;
 mod futures {
     use _futures::Future;
 
-    pub fn check_future<F, R>(f: F)
+    pub fn fuzz_future<F, R>(f: F)
     where
         F: Fn() -> R + Sync + Send + 'static,
         R: Future<Item = (), Error = ()>,

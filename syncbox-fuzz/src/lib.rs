@@ -13,7 +13,7 @@ pub mod thread;
 #[cfg(feature = "futures")]
 pub mod futures;
 
-pub use check::check;
+pub use check::fuzz;
 
 #[cfg(feature = "futures")]
-pub use check::check_future;
+pub use check::fuzz_future;

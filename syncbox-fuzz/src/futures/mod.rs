@@ -1,3 +1,1 @@
-mod task;
-
-pub use self::task::Task;
+pub mod task;

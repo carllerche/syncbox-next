@@ -1,26 +1,27 @@
 cfg_if! {
     if #[cfg(fuzz)] {
         use syncbox_fuzz::{
-            futures::Task,
+            futures::task::{self, Task},
             sync::{
+                CausalCell,
                 atomic::AtomicUsize,
             },
         };
     } else {
-        use _futures::task::Task;
+        use _futures::task::{self, Task};
 
-        use std::fmt;
         use std::cell::UnsafeCell;
         use std::sync::atomic::AtomicUsize;
     }
 }
 
+use std::fmt;
 use std::sync::atomic::Ordering::{Acquire, Release, AcqRel, SeqCst};
 
 /// TODO: Dox
 pub struct AtomicTask {
     state: AtomicUsize,
-    task: UnsafeCell<Option<Task>>,
+    task: CausalCell<Option<Task>>,
 }
 
 const EMPTY: usize = 0;
@@ -41,26 +42,30 @@ impl AtomicTask {
 
         AtomicTask {
             state: AtomicUsize::new(EMPTY),
-            task: UnsafeCell::new(None),
+            task: CausalCell::new(None),
         }
     }
 
+    pub fn register(&self) {
+        self.register_task(task::current());
+    }
+
     /// TODO: Dox
-    pub fn register(&self, task: Task) {
+    pub fn register_task(&self, task: Task) {
         let state = self.state.load(SeqCst);
         if (state == EMPTY || state == HOLDS)
             && self.state.compare_and_swap(state, REGISTERING, Acquire) == state
         {
             return unsafe {
-                debug_assert_eq!(state == HOLDS, (*self.task.get()).is_some());
+                debug_assert_eq!(state == HOLDS, self.task.with(|t| t.is_some()));
 
                 // Locked acquired, update the task cell
-                *self.task.get() = Some(task);
+                self.task.with_mut(|t| *t = Some(task));
 
                 // Release the lock. If the state transitioned to include
-                // the `WAKING` bit, this means that a wake has been
+                // the `WAKING` bit, this means that a notify has been
                 // called concurrently, so we have to remove the task and
-                // wake it.`
+                // notify it.`
                 //
                 // Start by assuming that the state is `REGISTERING` as this
                 // is what we jut set it to.
@@ -71,20 +76,20 @@ impl AtomicTask {
                     Ok(_) => {}
                     Err(actual) => {
                         // This branch can only be reached if a
-                        // concurrent thread called `wake`. In this
+                        // concurrent thread called `notify`. In this
                         // case, `actual` **must** be `REGISTERING |
                         // `WAKING`.
                         debug_assert_eq!(actual, REGISTERING | WAKING);
 
-                        // Take the task to wake once the atomic operation has
+                        // Take the task to notify once the atomic operation has
                         // completed.
-                        let task = (*self.task.get()).take().unwrap();
+                        let task = self.task.with_mut(|t| t.take()).unwrap();
 
                         // Just swap, because no one could change state while state == `REGISTERING` | `WAKING`.
                         self.state.swap(EMPTY, AcqRel);
 
                         // The atomic swap was complete, now
-                        // wake the task and return.
+                        // notify the task and return.
                         task.notify();
                     }
                 }
@@ -111,7 +116,7 @@ impl AtomicTask {
     }
 
     /// TODO: Dox
-    pub fn wake(&self) {
+    pub fn notify(&self) {
         let state = self.state.load(SeqCst);
 
         if state == EMPTY || state & WAKING != 0 {
@@ -128,7 +133,7 @@ impl AtomicTask {
         match state {
             EMPTY | HOLDS => {
                 // The waking lock has been acquired.
-                let task = unsafe { (*self.task.get()).take() };
+                let task = unsafe { self.task.with_mut(|t| t.take()) };
                 debug_assert_eq!(state == HOLDS, task.is_some());
 
                 // Release the lock

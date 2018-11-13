@@ -39,4 +39,27 @@ impl AtomicUsize {
         self.rt.sync(order);
         self.std.compare_and_swap(current, new, order)
     }
+
+    pub fn compare_exchange(
+        &self,
+        current: usize,
+        new: usize,
+        success: Ordering,
+        failure: Ordering
+    ) -> Result<usize, usize>
+    {
+        unimplemented!();
+    }
+
+    pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
+        unimplemented!();
+    }
+
+    pub fn fetch_or(&self, val: usize, order: Ordering) -> usize {
+        unimplemented!();
+    }
+
+    pub fn fetch_and(&self, val: usize, order: Ordering) -> usize {
+        unimplemented!();
+    }
 }

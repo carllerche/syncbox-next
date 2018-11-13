@@ -1,0 +1,88 @@
+extern crate syncbox_fuzz;
+
+use syncbox_fuzz::sync::atomic::AtomicUsize;
+use syncbox_fuzz::sync::atomic::Ordering::{Acquire, Release, Relaxed};
+use syncbox_fuzz::thread;
+
+use std::sync::Arc;
+
+#[test]
+fn fuzz_valid() {
+    struct Inc {
+        num: AtomicUsize,
+    }
+
+    impl Inc {
+        fn new() -> Inc {
+            Inc {
+                num: AtomicUsize::new(0),
+            }
+        }
+
+        fn inc(&self) {
+            let mut curr = self.num.load(Relaxed);
+
+            loop {
+                let actual = self.num.compare_and_swap(
+                    curr, curr + 1, Relaxed);
+
+                if actual == curr {
+                    return;
+                }
+
+                curr = actual;
+            }
+        }
+    }
+
+    syncbox_fuzz::fuzz(|| {
+        let inc = Arc::new(Inc::new());
+
+        let ths: Vec<_> = (0..2).map(|_| {
+            let inc = inc.clone();
+            thread::spawn(move || inc.inc())
+        }).collect();
+
+        for th in ths {
+            th.join().unwrap();
+        }
+
+        assert_eq!(2, inc.num.load(Relaxed));
+    });
+}
+
+#[test]
+#[should_panic]
+fn checks_fail() {
+    struct BuggyInc {
+        num: AtomicUsize,
+    }
+
+    impl BuggyInc {
+        fn new() -> BuggyInc {
+            BuggyInc {
+                num: AtomicUsize::new(0),
+            }
+        }
+
+        fn inc(&self) {
+            let curr = self.num.load(Acquire);
+            self.num.store(curr + 1, Release);
+        }
+    }
+
+    syncbox_fuzz::fuzz(|| {
+        let buggy_inc = Arc::new(BuggyInc::new());
+
+        let ths: Vec<_> = (0..2).map(|_| {
+            let buggy_inc = buggy_inc.clone();
+            thread::spawn(move || buggy_inc.inc())
+        }).collect();
+
+        for th in ths {
+            th.join().unwrap();
+        }
+
+        assert_eq!(2, buggy_inc.num.load(Relaxed));
+    });
+}

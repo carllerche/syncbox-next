@@ -49,9 +49,6 @@ struct ThreadState {
     /// True if the thread is in a critical section
     critical: bool,
 
-    /// Thread joining this one
-    waiter: Option<usize>,
-
     /// Tracks observed causality
     causality: VersionVec,
 }
@@ -122,7 +119,9 @@ impl Execution {
         CURRENT_EXECUTION.with(|exec| {
             exec.active_thread_mut().run =
                 Run::Blocked;
-        })
+        });
+
+        Execution::branch();
     }
 
     pub fn acquire(th: ThreadHandle) {
@@ -159,7 +158,10 @@ impl Execution {
             };
 
             let stack = exec.stack();
-            let th = Thread::new(stack, || th(thread_handle));
+            let th = Thread::new(stack, || {
+                th(thread_handle);
+                Execution::thread_done();
+            });
 
             // Increment the causality
             causality.inc(thread_id);
@@ -206,21 +208,10 @@ impl Execution {
         f()
     }
 
-    pub fn thread_done() {
+    fn thread_done() {
         CURRENT_EXECUTION.with(|exec| {
-            let waiter = {
-                let th = &mut exec.threads[exec.active_thread];
-                th.run = Run::Terminated;
-                th.waiter.take()
-            };
-
-            if let Some(waiter) = waiter {
-                let th = &mut exec.threads[waiter];
-
-                if th.run.is_blocked() {
-                    th.run = Run::Runnable;
-                }
-            }
+            let th = &mut exec.threads[exec.active_thread];
+            th.run = Run::Terminated;
         });
     }
 
@@ -349,7 +340,6 @@ impl ThreadState {
         ThreadState {
             run: Run::Runnable,
             critical: false,
-            waiter: None,
             causality,
         }
     }

@@ -1,5 +1,5 @@
 [package]
-name = "syncbox"
+name = "fuzz-atomic-task"
 version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 
@@ -7,4 +7,5 @@ authors = ["Carl Lerche <me@carllerche.com>"]
 
 [dependencies]
 cfg-if = "0.1.6"
-"futures" = { version = "0.1.25", optional = true}
+futures = "0.1.25"
+syncbox-fuzz = { path = "../../syncbox-fuzz", features = ["futures"] }

@@ -7,11 +7,7 @@ where
     rt::check(f);
 }
 
-#[cfg(feature = "futures")]
-pub use self::futures::*;
-
-#[cfg(feature = "futures")]
-mod futures {
+if_futures! {
     use _futures::Future;
 
     pub fn fuzz_future<F, R>(f: F)
@@ -19,6 +15,8 @@ mod futures {
         F: Fn() -> R + Sync + Send + 'static,
         R: Future<Item = (), Error = ()>,
     {
-        unimplemented!();
+        rt::check(move || {
+            rt::wait_future(f());
+        });
     }
 }

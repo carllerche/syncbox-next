@@ -3,7 +3,6 @@ use rt::vv::VersionVec;
 
 use fringe::OsStack;
 
-use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::mem::replace;
 
@@ -12,7 +11,8 @@ pub struct Execution {
     state: ExecutionState,
 }
 
-pub struct JoinHandle {
+#[derive(Debug, Clone)]
+pub struct ThreadHandle {
     execution: ExecutionId,
     thread_id: usize,
 }
@@ -109,16 +109,57 @@ impl Execution {
         }
     }
 
+    pub fn current() -> ThreadHandle {
+        CURRENT_EXECUTION.with(|exec| {
+            ThreadHandle {
+                execution: exec.id.clone(),
+                thread_id: exec.active_thread,
+            }
+        })
+    }
+
+    pub fn park() {
+        CURRENT_EXECUTION.with(|exec| {
+            exec.active_thread_mut().run =
+                Run::Blocked;
+        })
+    }
+
+    pub fn acquire(th: ThreadHandle) {
+        // Acquire the ordering
+        CURRENT_EXECUTION.with(|exec| {
+            if th.thread_id >= exec.active_thread {
+                let (l, r) = exec.threads.split_at_mut(th.thread_id);
+
+                l[exec.active_thread].causality.join(
+                    &r[0].causality);
+            } else {
+                let (l, r) = exec.threads.split_at_mut(exec.active_thread);
+
+                r[0].causality.join(
+                    &l[th.thread_id].causality);
+            }
+        });
+    }
+
     /// Spawn a new thread on the current execution
-    pub fn spawn<F: FnOnce() + 'static>(th: F) -> JoinHandle {
+    pub fn spawn<F>(th: F)
+    where
+        F: FnOnce(ThreadHandle) + 'static,
+    {
         CURRENT_EXECUTION.with(|exec| {
             let mut causality = exec.threads[exec.active_thread]
                 .causality.clone();
 
-            let stack = exec.stack();
-            let th = Thread::new(stack, th);
-
             let thread_id = exec.threads.len();
+
+            let thread_handle = ThreadHandle {
+                thread_id,
+                execution: exec.id.clone(),
+            };
+
+            let stack = exec.stack();
+            let th = Thread::new(stack, || th(thread_handle));
 
             // Increment the causality
             causality.inc(thread_id);
@@ -129,11 +170,6 @@ impl Execution {
             // Queue the new thread
             exec.queued_spawn
                 .push_back(th);
-
-            JoinHandle {
-                execution: exec.id.clone(),
-                thread_id,
-            }
         })
     }
 
@@ -300,27 +336,6 @@ impl ExecutionState {
         }
     }
 
-    /// Returns `true` if `thread_id` has completed
-    fn wait_on(&mut self, thread_id: usize) -> bool {
-        let me = self.active_thread;
-
-        {
-            let other = &mut self.threads[thread_id];
-
-            if other.run.is_terminated() {
-                return true;
-            }
-
-            other.waiter = Some(me);
-        }
-
-        // Set current run state to blocked
-        self.threads[me].run =
-            Run::Blocked;
-
-        false
-    }
-
     fn stack(&mut self) -> OsStack {
         self.stacks.pop()
             .unwrap_or_else(|| {
@@ -368,30 +383,11 @@ impl ExecutionId {
     }
 }
 
-impl JoinHandle {
-    pub fn wait(&self) {
-        let unblocked = CURRENT_EXECUTION.with(|exec| {
-            assert_eq!(exec.id, self.execution);
-            exec.wait_on(self.thread_id)
-        });
-
-        if !unblocked {
-            Execution::branch();
-        }
-
-        // Acquire the ordering
+impl ThreadHandle {
+    pub fn unpark(&self) {
         CURRENT_EXECUTION.with(|exec| {
-            if self.thread_id >= exec.active_thread {
-                let (l, r) = exec.threads.split_at_mut(self.thread_id);
-
-                l[exec.active_thread].causality.join(
-                    &r[0].causality);
-            } else {
-                let (l, r) = exec.threads.split_at_mut(exec.active_thread);
-
-                r[0].causality.join(
-                    &l[self.thread_id].causality);
-            }
+            assert!(exec.threads[self.thread_id].run.is_blocked());
+            exec.threads[self.thread_id].run = Run::Runnable;
         });
     }
 }
@@ -424,228 +420,3 @@ impl Run {
         }
     }
 }
-
-/*
-use rt::Thread;
-
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::thread::{self, Thread as StdThread};
-
-/// Initialize a new execution, returning the root thread.
-pub fn create(prev: Option<Execution>) -> (Execution, Thread) {
-    let threads = vec![ThreadEntry::new()];
-
-    let seed = prev
-        .map(|execution| {
-            let seed = execution.next_seed();
-            assert!(!seed.is_empty());
-            seed
-        })
-        .unwrap_or(VecDeque::new());
-
-    let inner = Arc::new(Mutex::new(Inner {
-        seed,
-        branches: vec![],
-        threads,
-        executing: 0,
-    }));
-
-    let execution = Execution {
-        inner: inner.clone(),
-    };
-
-    let thread = Thread::new(Handle {
-        inner,
-        index: 0,
-    });
-
-    (execution, thread)
-}
-
-#[derive(Debug)]
-pub struct Execution {
-    inner: Arc<Mutex<Inner>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Handle {
-    inner: Arc<Mutex<Inner>>,
-    index: usize,
-}
-
-#[derive(Debug)]
-struct Inner {
-    seed: VecDeque<Branch>,
-
-    branches: Vec<Branch>,
-
-    /// State for each thread
-    threads: Vec<ThreadEntry>,
-
-    /// Index of the executing threads
-    executing: usize,
-}
-
-#[derive(Debug)]
-struct ThreadEntry {
-    /// `true` if the thread is in a runnable state.
-    runnable: bool,
-
-    /// std thread to notify when lock acquired.
-    std: Option<StdThread>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Branch {
-    index: usize,
-    rem: usize,
-}
-
-// ===== impl Execution =====
-
-impl Execution {
-    pub(crate) fn next_seed(&self) -> VecDeque<Branch> {
-        let inner = self.inner.lock().unwrap();
-
-        let mut ret: VecDeque<_> = inner.branches.iter()
-            .map(|b| b.clone())
-            .collect();
-
-        while !ret.is_empty() {
-            let last = ret.len() - 1;
-
-            ret[last].index += 1;
-
-            if ret[last].rem > 0 {
-                return ret;
-            }
-
-            ret.pop_back();
-        }
-
-        ret
-    }
-}
-
-// ===== impl Handle =====
-
-impl Handle {
-    pub fn new_thread(&self) -> Thread {
-        let index = {
-            let mut lock = self.inner.lock().unwrap();
-            let index = lock.threads.len();
-
-            lock.threads.push(ThreadEntry::new());
-
-            index
-        };
-
-        let handle = Handle {
-            inner: self.inner.clone(),
-            index,
-        };
-
-        Thread::new(handle)
-    }
-
-    /// Enter the thread context
-    pub fn enter(&self) {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            inner.threads[self.index].std = Some(thread::current());
-        }
-
-        self.wait_for_lock();
-    }
-
-    /// Branch execution
-    pub fn branch(&self) {
-        {
-            let mut inner = self.inner.lock().unwrap();
-            inner.schedule();
-        }
-
-        self.wait_for_lock()
-    }
-
-    /// Wait for the execution lock
-    pub fn wait_for_lock(&self) {
-        loop {
-            {
-                let inner = self.inner.lock().unwrap();
-                if inner.executing == self.index {
-                    return;
-                }
-            }
-
-            thread::park();
-        }
-    }
-
-    /// Mark the thread as blocked
-    pub fn blocked(&self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.threads[self.index].runnable = false;
-    }
-
-    /// Mark the thread as runnable
-    pub fn unblocked(&self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.threads[self.index].runnable = true;
-    }
-
-    /// Terminate the thread
-    pub fn terminate(&self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.threads[self.index].runnable = false;
-
-        inner.schedule();
-    }
-}
-
-// ===== impl Inner =====
-
-impl Inner {
-    /// Schedule a thread for execution
-    fn schedule(&mut self) {
-        let start = self.seed.pop_front()
-            .map(|branch| branch.index)
-            .unwrap_or(0);
-
-        for (mut i, th) in self.threads[start..].iter().enumerate() {
-            i += start;
-
-            if th.runnable {
-                let rem = self.threads[i+1..].iter()
-                    .filter(|th| th.runnable)
-                    .count();
-
-                self.branches.push(Branch {
-                    index: i,
-                    rem,
-                });
-
-                self.executing = i;
-
-                if let Some(ref th) = th.std {
-                    th.unpark();
-                }
-
-                return;
-            }
-        }
-    }
-}
-
-// ===== impl ThreadEntry =====
-
-impl ThreadEntry {
-    fn new() -> ThreadEntry {
-        ThreadEntry {
-            runnable: true,
-            std: None,
-        }
-    }
-}
-*/

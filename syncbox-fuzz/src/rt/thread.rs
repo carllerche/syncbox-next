@@ -1,5 +1,4 @@
 use fringe::{
-    self,
     Generator,
     OsStack,
     generator::Yielder,
@@ -25,6 +24,8 @@ impl Thread {
                     YIELDER.with(|cell| cell.set(ptr::null()));
                 }
             }
+
+            let _reset = UnsetTls;
 
             let ptr = yielder as *const _;
             YIELDER.with(|cell| cell.set(ptr));

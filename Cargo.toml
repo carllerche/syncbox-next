@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Carl Lerche <me@carllerche.com>"]
 
 [workspace]
+members = [
+  "syncbox-fuzz",
+]
 
 [dependencies]
 cfg-if = "0.1.6"

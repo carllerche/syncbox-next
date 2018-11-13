@@ -1,13 +1,9 @@
-use rt;
+use rt::{self, oneshot};
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::thread as std;
 
 pub struct JoinHandle<T> {
-    rx: Rc<RefCell<Option<std::Result<T>>>>,
-    rt: rt::JoinHandle,
+    rx: oneshot::Receiver<(std::Result<T>, rt::ThreadHandle)>,
 }
 
 pub fn spawn<F, T>(f: F) -> JoinHandle<T>
@@ -16,25 +12,21 @@ where
     F: 'static,
     T: 'static,
 {
-    let rx = Rc::new(RefCell::new(None));
-    let tx = rx.clone();
+    let (tx, rx) = oneshot::channel();
 
-    let rt = rt::spawn(move || {
-        *tx.borrow_mut() = Some(Ok(f()));
-
-        rt::thread_done();
+    rt::spawn(move |th| {
+        tx.send((Ok(f()), th));
     });
 
     JoinHandle {
         rx,
-        rt,
     }
 }
 
 impl<T> JoinHandle<T> {
     pub fn join(self) -> std::Result<T> {
-        self.rt.wait();
-        self.rx.borrow_mut()
-            .take().unwrap()
+        let (res, th) = self.rx.recv();
+        rt::acquire(th);
+        res
     }
 }

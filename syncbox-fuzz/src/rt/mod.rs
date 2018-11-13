@@ -1,11 +1,12 @@
 mod causality;
 mod execution;
+pub mod oneshot;
 mod thread;
 mod vv;
 
 pub use self::causality::Causality;
 use self::execution::Execution;
-pub use self::execution::JoinHandle;
+pub use self::execution::ThreadHandle;
 pub use self::vv::VersionVec;
 
 use std::sync::Arc;
@@ -38,11 +39,25 @@ where
     }
 }
 
-pub fn spawn<F>(f: F) -> JoinHandle
+pub fn spawn<F>(f: F)
 where
-    F: FnOnce() + 'static,
+    F: FnOnce(ThreadHandle) + 'static,
 {
     Execution::spawn(f)
+}
+
+pub fn acquire(th: ThreadHandle) {
+    Execution::acquire(th);
+}
+
+/// Returns a handle to the current thread
+pub fn current() -> ThreadHandle {
+    Execution::current()
+}
+
+/// Marks the current thread as blocked
+pub fn park() {
+    Execution::park()
 }
 
 /// Add an execution branch point.
@@ -65,90 +80,13 @@ where
     Execution::with_version(f)
 }
 
-pub fn thread_done() {
-    Execution::thread_done();
-}
+if_futures! {
+    use _futures::Future;
 
-/*
-/// Start an execution
-pub fn start<F, T>(prev: Option<execution::Execution>, f: F) -> (execution::Execution, T)
-where
-    F: FnOnce() -> T,
-{
-    /*
-    let (execution, thread) = execution::create(prev);
-    let ret = enter(thread, f);
-    (execution, ret)
-    */
-    unimplemented!();
+    pub fn wait_future<F>(f: F)
+    where
+        F: Future<Item = (), Error = ()>
+    {
+        unimplemented!();
+    }
 }
-
-/// Return a handle to the current thread
-pub fn current() -> Thread {
-    unimplemented!();
-    /*
-    CURRENT_THREAD.with(|cell| {
-        match *cell.borrow() {
-            Some(ref th) => th.clone(),
-            None => unimplemented!(),
-        }
-    })
-    */
-}
-
-/// Fork an execution thread
-pub fn fork() -> Thread {
-    /*
-    CURRENT_THREAD.with(|cell| {
-        match *cell.borrow() {
-            Some(ref th) => th.fork(),
-            None => unimplemented!(),
-        }
-    })
-    */
-    unimplemented!();
-}
-
-/// Add an execution branch point.
-pub fn branch() {
-    /*
-    CURRENT_THREAD.with(|cell| {
-        match *cell.borrow() {
-            Some(ref th) => th.branch(),
-            None => unimplemented!(),
-        }
-    })
-    */
-    unimplemented!();
-}
-
-/// Mark the current thread as blocked.
-pub fn blocked() {
-    /*
-    CURRENT_THREAD.with(|cell| {
-        match *cell.borrow() {
-            Some(ref th) => th.blocked(),
-            None => unimplemented!(),
-        }
-    })
-    */
-    unimplemented!();
-}
-
-pub fn enter<F, T>(thread: Thread, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    /*
-    thread.enter();
-
-    CURRENT_THREAD.with(|cell| {
-        *cell.borrow_mut() = Some(thread);
-        let ret = f();
-        cell.borrow().as_ref().unwrap().terminate();
-        ret
-    })
-    */
-    unimplemented!();
-}
-*/

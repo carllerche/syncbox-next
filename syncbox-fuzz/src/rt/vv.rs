@@ -1,4 +1,4 @@
-use std::cmp::{self, PartialOrd};
+use std::cmp;
 
 #[derive(Debug, Clone, PartialOrd, Eq, PartialEq)]
 pub struct VersionVec {

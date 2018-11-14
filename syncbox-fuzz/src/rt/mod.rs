@@ -81,12 +81,28 @@ where
 }
 
 if_futures! {
+    mod futures;
+
     use _futures::Future;
 
     pub fn wait_future<F>(f: F)
     where
         F: Future<Item = (), Error = ()>
     {
-        unimplemented!();
+        use _futures::executor::spawn;
+        use std::sync::Arc;
+
+        let notify = Arc::new(futures::Notify::new());
+        let mut f = spawn(f);
+
+        loop {
+            let res = f.poll_future_notify(&notify, 0).unwrap();
+
+            if res.is_ready() {
+                return;
+            }
+
+            park();
+        }
     }
 }

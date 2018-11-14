@@ -376,8 +376,11 @@ impl ExecutionId {
 impl ThreadHandle {
     pub fn unpark(&self) {
         CURRENT_EXECUTION.with(|exec| {
-            assert!(exec.threads[self.thread_id].run.is_blocked());
-            exec.threads[self.thread_id].run = Run::Runnable;
+            let th = &mut exec.threads[self.thread_id];
+
+            if th.run.is_blocked() {
+                th.run = Run::Runnable;
+            }
         });
     }
 }

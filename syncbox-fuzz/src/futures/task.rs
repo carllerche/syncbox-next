@@ -1,12 +1,15 @@
+use rt::{self, ThreadHandle};
+
 pub fn current() -> Task {
-    unimplemented!();
+    Task { thread: rt::current() }
 }
 
 pub struct Task {
+    thread: ThreadHandle,
 }
 
 impl Task {
     pub fn notify(&self) {
-        unimplemented!();
+        self.thread.unpark();
     }
 }

@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 
 pub struct Atomic<T> {
     val: Cell<T>,
-    rt: rt::SyncPoint,
+    rt: rt::Synchronize,
 }
 
 impl<T> Atomic<T>
@@ -15,7 +15,7 @@ where
     pub fn new(val: T) -> Atomic<T> {
         Atomic {
             val: Cell::new(val),
-            rt: rt::SyncPoint::new(),
+            rt: rt::Synchronize::new(),
         }
     }
 

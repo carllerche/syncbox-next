@@ -34,7 +34,7 @@ impl Causality {
             Relaxed => {
                 // Nothing happens!
             }
-            _ => unimplemented!(),
+            order => unimplemented!("unimplemented ordering {:?}", order),
         }
     }
 }

@@ -48,18 +48,25 @@ impl AtomicUsize {
         _failure: Ordering
     ) -> Result<usize, usize>
     {
+        rt::branch();
         unimplemented!();
     }
 
-    pub fn fetch_add(&self, _val: usize, _order: Ordering) -> usize {
-        unimplemented!();
+    pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
+        rt::branch();
+        self.rt.sync(order);
+        self.std.fetch_add(val, order)
     }
 
-    pub fn fetch_or(&self, _val: usize, _order: Ordering) -> usize {
-        unimplemented!();
+    pub fn fetch_or(&self, val: usize, order: Ordering) -> usize {
+        rt::branch();
+        self.rt.sync(order);
+        self.std.fetch_or(val, order)
     }
 
-    pub fn fetch_and(&self, _val: usize, _order: Ordering) -> usize {
-        unimplemented!();
+    pub fn fetch_and(&self, val: usize, order: Ordering) -> usize {
+        rt::branch();
+        self.rt.sync(order);
+        self.std.fetch_and(val, order)
     }
 }

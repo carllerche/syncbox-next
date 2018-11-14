@@ -32,12 +32,29 @@ struct ExecutionId(usize);
 
 #[derive(Debug)]
 struct ExecutionState {
+    /// Execution identifier
     id: ExecutionId,
+
+    /// Branching start point
     seed: VecDeque<Branch>,
+
+    /// Path taken
     branches: Vec<Branch>,
+
+    /// State for each thread
     threads: Vec<ThreadState>,
+
+    /// Currently scheduled thread
     active_thread: usize,
+
+    /// Sequential consistency causality. All sequentially consistent operations synchronize with
+    /// this causality.
+    seq_cst_causality: VersionVec,
+
+    /// Queue of spawned threads that have not yet been added to the execution.
     queued_spawn: VecDeque<Thread>,
+
+    /// Stack cache.
     stacks: Vec<OsStack>,
 }
 
@@ -91,6 +108,7 @@ impl Execution {
             branches: vec![],
             threads: vec![ThreadState::new(vv)],
             active_thread: 0,
+            seq_cst_causality: VersionVec::new(),
             queued_spawn: VecDeque::new(),
             stacks: seed.stacks,
         };

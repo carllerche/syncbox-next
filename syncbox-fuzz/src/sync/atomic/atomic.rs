@@ -21,25 +21,25 @@ where
 
     pub fn load(&self, order: Ordering) -> T {
         rt::branch();
-        self.rt.sync(order);
+        self.rt.sync_read(order);
         self.val.get()
     }
 
     pub fn store(&self, val: T, order: Ordering) {
         rt::branch();
-        self.rt.sync(order);
+        self.rt.sync_write(order);
         self.val.set(val);
     }
 
     pub fn swap(&self, val: T, order: Ordering) -> T {
         rt::branch();
-        self.rt.sync(order);
+        self.rt.sync_read_write(order);
         self.val.replace(val)
     }
 
     pub fn compare_and_swap(&self, current: T, new: T, order: Ordering) -> T {
         rt::branch();
-        self.rt.sync(order);
+        self.rt.sync_read_write(order);
 
         let actual = self.val.get();
 
@@ -63,11 +63,11 @@ where
         let actual = self.val.get();
 
         if actual == current {
-            self.rt.sync(success);
+            self.rt.sync_read_write(success);
             self.val.set(new);
             Ok(actual)
         } else {
-            self.rt.sync(failure);
+            self.rt.sync_read_write(failure);
             Err(actual)
         }
     }
@@ -77,7 +77,7 @@ where
         F: FnOnce(T) -> T,
     {
         rt::branch();
-        self.rt.sync(order);
+        self.rt.sync_read_write(order);
         let actual = self.val.get();
         self.val.set(f(actual));
         actual

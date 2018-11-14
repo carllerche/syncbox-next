@@ -2,10 +2,10 @@ extern crate syncbox_fuzz;
 
 use syncbox_fuzz::sync::CausalCell;
 use syncbox_fuzz::sync::atomic::AtomicUsize;
-use syncbox_fuzz::sync::atomic::Ordering::{Acquire, Release};
 use syncbox_fuzz::thread;
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering::{Acquire, Release};
 
 #[test]
 fn thread_join_causality() {

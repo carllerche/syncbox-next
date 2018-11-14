@@ -1,10 +1,10 @@
 extern crate syncbox_fuzz;
 
 use syncbox_fuzz::sync::atomic::AtomicUsize;
-use syncbox_fuzz::sync::atomic::Ordering::{Acquire, Release, Relaxed};
 use syncbox_fuzz::thread;
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering::{Acquire, Release, Relaxed};
 
 #[test]
 fn fuzz_valid() {

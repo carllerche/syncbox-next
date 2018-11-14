@@ -5,7 +5,7 @@ mod scheduler;
 mod thread;
 mod vv;
 
-pub use self::causality::Causality;
+pub use self::causality::SyncPoint;
 pub use self::execution::{ThreadHandle};
 pub use self::vv::{Actor, CausalContext, VersionVec};
 

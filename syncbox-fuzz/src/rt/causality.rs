@@ -3,17 +3,17 @@ use rt::{self, CausalContext, VersionVec};
 use std::cell::RefCell;
 use std::sync::atomic::Ordering::{self, *};
 
-pub struct Causality {
+pub struct SyncPoint {
     version: RefCell<VersionVec>,
 }
 
-impl Causality {
+impl SyncPoint {
     pub fn new() -> Self {
         let vv = rt::causal_context(|ctx| {
             ctx.version().clone()
         });
 
-        Causality {
+        SyncPoint {
             version: RefCell::new(vv),
         }
     }

@@ -9,7 +9,9 @@ pub struct CausalCell<T> {
 
 impl<T> CausalCell<T> {
     pub fn new(data: T) -> CausalCell<T> {
-        let v = rt::with_version(|v, _| v.clone());
+        let v = rt::causal_context(|ctx| {
+            ctx.version().clone()
+        });
 
         CausalCell {
             data: UnsafeCell::new(data),
@@ -21,9 +23,9 @@ impl<T> CausalCell<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        rt::with_version(|th_version, _| {
+        rt::causal_context(|ctx| {
             let v = self.version.borrow();
-            assert!(*v <= *th_version, "cell={:?}; thread={:?}", *v, *th_version);
+            assert!(*v <= *ctx.version(), "cell={:?}; thread={:?}", *v, *ctx.version());
         });
 
         rt::critical(|| {
@@ -35,10 +37,10 @@ impl<T> CausalCell<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        rt::with_version(|th_version, _| {
+        rt::causal_context(|ctx| {
             let mut v = self.version.borrow_mut();
-            assert!(*v <= *th_version, "cell={:?}; thread={:?}", *v, *th_version);
-            v.join(th_version);
+            assert!(*v <= *ctx.version(), "cell={:?}; thread={:?}", *v, *ctx.version());
+            v.join(ctx.version());
         });
 
         rt::critical(|| {

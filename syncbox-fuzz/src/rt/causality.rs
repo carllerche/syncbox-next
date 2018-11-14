@@ -1,4 +1,4 @@
-use rt::{self, VersionVec};
+use rt::{self, CausalContext, VersionVec};
 
 use std::cell::RefCell;
 use std::sync::atomic::Ordering::{self, *};
@@ -9,7 +9,9 @@ pub struct Causality {
 
 impl Causality {
     pub fn new() -> Self {
-        let vv = rt::with_version(|vv, _| vv.clone());
+        let vv = rt::causal_context(|ctx| {
+            ctx.version().clone()
+        });
 
         Causality {
             version: RefCell::new(vv),
@@ -22,16 +24,16 @@ impl Causality {
                 // Nothing happens!
             }
             Acquire | AcqRel => {
-                rt::with_version(|vv, _| {
-                    self.sync_acq(vv);
+                rt::causal_context(|ctx| {
+                    self.sync_acq(ctx);
                 });
             }
             Release => {
                 panic!("invalid ordering");
             }
             SeqCst => {
-                rt::with_version(|vv, _| {
-                    self.sync_acq(vv);
+                rt::causal_context(|ctx| {
+                    self.sync_acq(ctx);
                     unimplemented!();
                 });
             }
@@ -45,8 +47,8 @@ impl Causality {
                 // Nothing happens!
             }
             Release | AcqRel => {
-                rt::with_version(|vv, id| {
-                    self.sync_rel(vv, id);
+                rt::causal_context(|ctx| {
+                    self.sync_rel(ctx);
                 });
             }
             Acquire => {
@@ -54,8 +56,8 @@ impl Causality {
             }
 
             SeqCst => {
-                rt::with_version(|vv, id| {
-                    self.sync_rel(vv, id);
+                rt::causal_context(|ctx| {
+                    self.sync_rel(ctx);
                     unimplemented!();
                 });
             }
@@ -68,25 +70,25 @@ impl Causality {
             Relaxed => {
             }
             Acquire => {
-                rt::with_version(|vv, _| {
-                    self.sync_acq(vv);
+                rt::causal_context(|ctx| {
+                    self.sync_acq(ctx);
                 });
             }
             Release => {
-                rt::with_version(|vv, id| {
-                    self.sync_rel(vv, id);
+                rt::causal_context(|ctx| {
+                    self.sync_rel(ctx);
                 });
             }
             AcqRel => {
-                rt::with_version(|vv, id| {
-                    self.sync_acq(vv);
-                    self.sync_rel(vv, id);
+                rt::causal_context(|ctx| {
+                    self.sync_acq(ctx);
+                    self.sync_rel(ctx);
                 });
             }
             SeqCst => {
-                rt::with_version(|vv, id| {
-                    self.sync_acq(vv);
-                    self.sync_rel(vv, id);
+                rt::causal_context(|ctx| {
+                    self.sync_acq(ctx);
+                    self.sync_rel(ctx);
                     unimplemented!();
                 });
             }
@@ -94,14 +96,14 @@ impl Causality {
         }
     }
 
-    fn sync_acq(&self, thread_version: &mut VersionVec) {
+    fn sync_acq(&self, ctx: &mut CausalContext) {
         let rx = self.version.borrow();
-        thread_version.join(&rx);
+        ctx.join(&rx);
     }
 
-    fn sync_rel(&self, thread_version: &mut VersionVec, id: usize) {
+    fn sync_rel(&self, ctx: &mut CausalContext) {
         let mut tx = self.version.borrow_mut();
-        tx.join(&thread_version);
-        thread_version.inc(id);
+        tx.join(ctx.version());
+        ctx.actor().inc();
     }
 }

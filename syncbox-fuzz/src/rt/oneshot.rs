@@ -50,7 +50,7 @@ impl<T> Receiver<T> {
                 return value;
             }
 
-            inner.rx = Some(rt::current());
+            inner.rx = Some(ThreadHandle::current());
         }
 
         rt::park();

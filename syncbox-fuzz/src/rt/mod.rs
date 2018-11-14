@@ -1,13 +1,17 @@
 mod causality;
 mod execution;
 pub mod oneshot;
+mod scheduler;
 mod thread;
 mod vv;
 
 pub use self::causality::Causality;
-use self::execution::Execution;
-pub use self::execution::ThreadHandle;
-pub use self::vv::VersionVec;
+pub use self::execution::{ThreadHandle};
+pub use self::vv::{Actor, CausalContext, VersionVec};
+
+use self::execution::{Execution, Seed, Branch, ThreadState};
+use self::scheduler::Scheduler;
+use self::thread::Thread;
 
 use std::sync::Arc;
 
@@ -19,7 +23,7 @@ where
 
     let mut execution = {
         let f = f.clone();
-        Execution::new(move || f())
+        Scheduler::new(move || f())
     };
 
     execution.run();
@@ -34,7 +38,7 @@ where
         }
 
         let f = f.clone();
-        execution = Execution::with_seed(next, move || f());
+        execution = Scheduler::with_seed(next, move || f());
         execution.run();
     }
 }
@@ -43,26 +47,21 @@ pub fn spawn<F>(f: F)
 where
     F: FnOnce(ThreadHandle) + 'static,
 {
-    Execution::spawn(f)
+    Scheduler::spawn(f)
 }
 
 pub fn acquire(th: ThreadHandle) {
-    Execution::acquire(th);
-}
-
-/// Returns a handle to the current thread
-pub fn current() -> ThreadHandle {
-    Execution::current()
+    Scheduler::acquire(th);
 }
 
 /// Marks the current thread as blocked
 pub fn park() {
-    Execution::park()
+    Scheduler::park()
 }
 
 /// Add an execution branch point.
 pub fn branch() {
-    Execution::branch();
+    Scheduler::branch();
 }
 
 /// Critical section, may not branch.
@@ -70,14 +69,16 @@ pub fn critical<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    Execution::critical(f)
+    ThreadState::critical(f)
 }
 
-pub fn with_version<F, R>(f: F) -> R
+pub fn causal_context<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut VersionVec, usize) -> R
+    F: FnOnce(&mut CausalContext) -> R
 {
-    Execution::with_version(f)
+    Execution::with(|execution| {
+        f(&mut CausalContext::new(execution))
+    })
 }
 
 if_futures! {

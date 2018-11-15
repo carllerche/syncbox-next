@@ -1,11 +1,11 @@
-mod causality;
 mod execution;
 pub mod oneshot;
 mod scheduler;
+mod synchronize;
 mod thread;
 mod vv;
 
-pub use self::causality::Synchronize;
+pub use self::synchronize::Synchronize;
 pub use self::execution::{ThreadHandle};
 pub use self::vv::{Actor, CausalContext, VersionVec};
 

@@ -84,4 +84,10 @@ impl<'a> CausalContext<'a> {
     pub fn actor(&mut self) -> &mut Actor<'a> {
         &mut self.actor
     }
+
+    /// Insert a point of sequential consistency
+    pub fn seq_cst(&mut self) {
+        self.actor.vv.join(self.seq_cst_causality);
+        self.seq_cst_causality.join(self.actor.vv);
+    }
 }

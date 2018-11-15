@@ -1,7 +1,7 @@
 use rt::{self, ThreadHandle};
 
 pub fn current() -> Task {
-    Task { thread: rt::current() }
+    Task { thread: ThreadHandle::current() }
 }
 
 pub struct Task {

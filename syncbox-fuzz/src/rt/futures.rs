@@ -8,7 +8,7 @@ pub struct Notify {
 impl Notify {
     pub fn new() -> Notify {
         Notify {
-            thread: rt::current(),
+            thread: ThreadHandle::current(),
         }
     }
 }

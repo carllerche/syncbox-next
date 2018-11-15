@@ -24,6 +24,5 @@ pub use check::fuzz;
 if_futures! {
     extern crate futures as _futures;
 
-    pub mod futures;
     pub use check::fuzz_future;
 }

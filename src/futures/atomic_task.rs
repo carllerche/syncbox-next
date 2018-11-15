@@ -1,19 +1,19 @@
 cfg_if! {
     if #[cfg(fuzz)] {
         use syncbox_fuzz::{
-            futures::task::{self, Task},
             sync::{
                 CausalCell,
                 atomic::AtomicUsize,
             },
         };
     } else {
-        use _futures::task::{self, Task};
 
         use std::cell::UnsafeCell;
         use std::sync::atomic::AtomicUsize;
     }
 }
+
+use _futures::task::{self, Task};
 
 use std::fmt;
 use std::sync::atomic::Ordering::{Acquire, Release, AcqRel, SeqCst};

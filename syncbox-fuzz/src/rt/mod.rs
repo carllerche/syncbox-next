@@ -34,7 +34,7 @@ where
         i += 1;
 
         if i % 10_000 == 0 {
-            println!("iter {}", i);
+            println!("+ iter {}", i);
         }
 
         let f = f.clone();
@@ -103,7 +103,9 @@ if_futures! {
                 return;
             }
 
-            park();
+            if !notify.consume_notify() {
+                park();
+            }
         }
     }
 }

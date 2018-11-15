@@ -7,8 +7,6 @@ cfg_if! {
             },
         };
     } else {
-
-        use std::cell::UnsafeCell;
         use std::sync::atomic::AtomicUsize;
     }
 }
@@ -61,6 +59,8 @@ impl AtomicTask {
 
                 // Locked acquired, update the task cell
                 self.task.with_mut(|t| *t = Some(task));
+
+                println!(" >>> task set");
 
                 // Release the lock. If the state transitioned to include
                 // the `WAKING` bit, this means that a notify has been
@@ -120,6 +120,7 @@ impl AtomicTask {
         let state = self.state.load(SeqCst);
 
         if state == EMPTY || state & WAKING != 0 {
+            println!("FAST RETURN; state = {:?}", state);
             // One of:
             // * no task inside, nothing to wake
             // * another process is calling wake now

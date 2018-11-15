@@ -22,6 +22,7 @@ struct Write<T> {
     seq_cst: bool,
 }
 
+#[derive(Debug)]
 struct FirstSeen(Vec<Option<usize>>);
 
 impl<T> Atomic<T>

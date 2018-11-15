@@ -24,8 +24,10 @@ impl Notify {
 
 impl executor::Notify for Notify {
     fn notify(&self, _id: usize) {
-        rt::branch();
+        println!(" & ENTER NOTIFY");
         self.flag.store(true, Relaxed);
         self.thread.unpark();
+        rt::branch();
+        println!(" & EXIT NOTIFY");
     }
 }

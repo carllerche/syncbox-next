@@ -37,14 +37,14 @@ impl AtomicUsize {
     }
 
     pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
-        self.0.update(|v| v.wrapping_add(val), order)
+        self.0.rmw(|v| v.wrapping_add(val), order)
     }
 
     pub fn fetch_or(&self, val: usize, order: Ordering) -> usize {
-        self.0.update(|v| v | val, order)
+        self.0.rmw(|v| v | val, order)
     }
 
     pub fn fetch_and(&self, val: usize, order: Ordering) -> usize {
-        self.0.update(|v| v & val, order)
+        self.0.rmw(|v| v & val, order)
     }
 }

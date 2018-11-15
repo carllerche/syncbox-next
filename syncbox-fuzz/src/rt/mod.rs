@@ -9,7 +9,10 @@ pub use self::synchronize::Synchronize;
 pub use self::execution::{ThreadHandle};
 pub use self::vv::{Actor, CausalContext, VersionVec};
 
-use self::execution::{Execution, Seed, Branch, ThreadState};
+// TODO: Cleanup?
+pub use self::execution::Branch;
+
+use self::execution::{Execution, Seed, ThreadState};
 use self::scheduler::Scheduler;
 use self::thread::Thread;
 
@@ -34,7 +37,7 @@ where
         i += 1;
 
         if i % 10_000 == 0 {
-            println!("+ iter {}", i);
+            println!("+++++++++ iter {}", i);
         }
 
         let f = f.clone();

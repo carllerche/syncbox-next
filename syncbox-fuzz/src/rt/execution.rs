@@ -66,8 +66,14 @@ pub struct ThreadState {
 
 #[derive(Debug, Clone)]
 pub struct Branch {
+    /// True if a thread switch, false is an atomic load.
+    pub switch: bool,
+
+    /// Choice index
     pub index: usize,
-    pub rem: usize,
+
+    /// True if `index` is the final choice
+    pub last: bool,
 }
 
 #[derive(Debug)]
@@ -176,7 +182,7 @@ impl Execution {
 
             ret[last].index += 1;
 
-            if ret[last].rem > 0 {
+            if !ret[last].last {
                 return Some(Seed {
                     branches: ret,
                     stacks,

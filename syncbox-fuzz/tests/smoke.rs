@@ -86,3 +86,21 @@ fn checks_fail() {
         assert_eq!(2, buggy_inc.num.load(Relaxed));
     });
 }
+
+#[test]
+#[should_panic]
+fn check_ordering() {
+    syncbox_fuzz::fuzz(|| {
+        let n1 = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+        let n2 = n1.clone();
+
+        thread::spawn(move || {
+            n1.0.store(1, Relaxed);
+            n1.1.store(1, Relaxed);
+        });
+
+        if 1 == n2.1.load(Relaxed) {
+            assert_eq!(1, n2.0.load(Relaxed));
+        }
+    });
+}

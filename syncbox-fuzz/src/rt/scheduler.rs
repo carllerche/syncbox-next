@@ -92,20 +92,25 @@ impl Scheduler {
 
     fn schedule(&mut self) -> bool {
         let start = self.state.seed.pop_front()
-            .map(|branch| branch.index)
+            .map(|branch| {
+                assert!(branch.switch);
+                branch.index
+            })
             .unwrap_or(0);
 
         for (mut i, th) in self.state.threads[start..].iter().enumerate() {
             i += start;
 
             if th.is_runnable() {
-                let rem = self.state.threads[i+1..].iter()
+                let last = self.state.threads[i+1..].iter()
                     .filter(|th| th.is_runnable())
-                    .count();
+                    .next()
+                    .is_none();
 
                 self.state.branches.push(Branch {
+                    switch: true,
                     index: i,
-                    rem,
+                    last,
                 });
 
                 self.state.active_thread = i;

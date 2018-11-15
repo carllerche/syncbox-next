@@ -1,6 +1,8 @@
-use rt::Execution;
+use rt::{Branch, Execution};
 
 use std::cmp;
+use std::collections::VecDeque;
+use std::ops;
 
 #[derive(Debug, Clone, PartialOrd, Eq, PartialEq)]
 pub struct VersionVec {
@@ -18,7 +20,14 @@ pub struct Actor<'a> {
 pub struct CausalContext<'a> {
     actor: Actor<'a>,
     seq_cst_causality: &'a mut VersionVec,
+
+    // TODO: Cleanup
+    pub seed: &'a mut VecDeque<Branch>,
+    pub branches: &'a mut Vec<Branch>,
 }
+
+static NULL: usize = 0;
+const INIT: usize = 1;
 
 impl VersionVec {
     pub fn new() -> VersionVec {
@@ -34,14 +43,44 @@ impl VersionVec {
         vv
     }
 
+    // TODO: Iterate over `(ThreadId, Version)`
+    pub fn versions<'a>(&'a self) -> impl Iterator<Item = (usize, usize)> + 'a {
+        self.versions.iter()
+            .map(|v| *v)
+            .enumerate()
+    }
+
+    pub fn len(&self) -> usize {
+        self.versions.len()
+    }
+
     pub fn join(&mut self, other: &VersionVec) {
         if self.versions.len() < other.versions.len() {
-            self.versions.resize(other.versions.len(), 0);
+            self.versions.resize(other.versions.len(), INIT);
         }
 
         for (i, &version) in other.versions.iter().enumerate() {
             self.versions[i] = cmp::max(self.versions[i], version);
         }
+    }
+}
+
+impl ops::Index<usize> for VersionVec {
+    type Output = usize;
+
+    fn index(&self, index: usize) -> &usize {
+        self.versions.get(index)
+            .unwrap_or(&NULL)
+    }
+}
+
+impl ops::IndexMut<usize> for VersionVec {
+    fn index_mut(&mut self, index: usize) -> &mut usize {
+        if self.versions.len() < index + 1 {
+            self.versions.resize(index + 1, INIT);
+        }
+
+        &mut self.versions[index]
     }
 }
 
@@ -53,9 +92,22 @@ impl<'a> Actor<'a> {
         }
     }
 
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn causality(&self) -> &VersionVec {
+        &self.vv
+    }
+
+    // TODO: rename `version`
+    pub fn self_version(&self) -> usize {
+        self.vv[self.id]
+    }
+
     pub fn inc(&mut self) {
         if self.vv.versions.len() <= self.id {
-            self.vv.versions.resize(self.id + 1, 0);
+            self.vv.versions.resize(self.id + 1, INIT);
         }
 
         self.vv.versions[self.id] += 1;
@@ -70,15 +122,13 @@ impl<'a> CausalContext<'a> {
                 id: execution.active_thread,
             },
             seq_cst_causality: &mut execution.seq_cst_causality,
+            seed: &mut execution.seed,
+            branches: &mut execution.branches,
         }
     }
 
     pub fn join(&mut self, other: &VersionVec) {
         self.actor.vv.join(other);
-    }
-
-    pub fn version(&self) -> &VersionVec {
-        &self.actor.vv
     }
 
     pub fn actor(&mut self) -> &mut Actor<'a> {

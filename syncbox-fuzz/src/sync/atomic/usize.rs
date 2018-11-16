@@ -2,6 +2,7 @@ use super::Atomic;
 
 use std::sync::atomic::Ordering;
 
+#[derive(Debug)]
 pub struct AtomicUsize(Atomic<usize>);
 
 impl AtomicUsize {
@@ -38,6 +39,10 @@ impl AtomicUsize {
 
     pub fn fetch_add(&self, val: usize, order: Ordering) -> usize {
         self.0.rmw(|v| v.wrapping_add(val), order)
+    }
+
+    pub fn fetch_sub(&self, val: usize, order: Ordering) -> usize {
+        self.0.rmw(|v| v.wrapping_sub(val), order)
     }
 
     pub fn fetch_or(&self, val: usize, order: Ordering) -> usize {

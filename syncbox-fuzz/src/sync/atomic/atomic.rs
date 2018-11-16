@@ -4,10 +4,12 @@ use std::cell::RefCell;
 use std::sync::atomic::Ordering;
 
 /// An atomic value
+#[derive(Debug)]
 pub struct Atomic<T> {
     writes: RefCell<Vec<Write<T>>>,
 }
 
+#[derive(Debug)]
 struct Write<T> {
     /// The written value
     value: T,

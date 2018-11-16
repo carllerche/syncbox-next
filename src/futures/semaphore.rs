@@ -235,7 +235,7 @@ impl Semaphore {
     }
 
     /// Release a specific amount of permits to the semaphore
-    pub fn release_n(&self, mut n: usize) {
+    fn release_n(&self, mut n: usize) {
         while n > 0 {
             let waiter = match self.pop(n) {
                 Some(waiter) => waiter,

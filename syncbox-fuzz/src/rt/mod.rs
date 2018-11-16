@@ -36,9 +36,9 @@ where
     while let Some(next) = execution.next_seed() {
         i += 1;
 
-        // if i % 10_000 == 0 {
+        if i % 10_000 == 0 {
             println!("+++++++++ iter {}", i);
-        // }
+        }
 
         let f = f.clone();
         execution = Scheduler::with_seed(next, move || f());
@@ -107,9 +107,7 @@ if_futures! {
             }
 
             if !notify.consume_notify() {
-                println!(" ~ parking ~");
                 park();
-                println!(" ~ unpark ~");
             }
         }
     }

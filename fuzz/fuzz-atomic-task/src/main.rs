@@ -3,7 +3,7 @@ extern crate cfg_if;
 extern crate futures as _futures;
 extern crate syncbox_fuzz;
 
-#[path = "../../../src/futures/atomic_task2.rs"]
+#[path = "../../../src/futures/atomic_task.rs"]
 mod atomic_task;
 
 use atomic_task::AtomicTask;
@@ -37,24 +37,18 @@ fn main() {
             let chan = chan.clone();
 
             thread::spawn(move || {
-                println!("+ thread run");
                 chan.num.fetch_add(1, Relaxed);
-                println!(" + INC");
                 chan.task.notify();
-                println!(" + NOTIFY");
             });
         }
 
         poll_fn(move || {
             chan.task.register();
-            println!("+ rx registered");
 
             if 1 == chan.num.load(Relaxed) {
-                println!(" + rx ready");
                 return Ok(Async::Ready(()));
             }
 
-            println!(" + not ready");
             Ok(Async::NotReady)
         })
     });

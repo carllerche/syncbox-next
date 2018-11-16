@@ -324,8 +324,6 @@ impl ThreadHandle {
         CURRENT_EXECUTION.with(|exec| {
             let th = &mut exec.threads[self.thread_id];
 
-            println!(" ThreadHandle::unpark(); is_blocked = {:?}", th.run.is_blocked());
-
             if th.run.is_blocked() {
                 th.run = Run::Runnable;
             }

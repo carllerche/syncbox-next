@@ -223,17 +223,17 @@ impl FirstSeen {
     }
 
     fn touch(&mut self, actor: &Actor) {
-        let causality = actor.causality();
+        let happens_before = actor.happens_before();
 
-        if self.0.len() < causality.len() {
-            self.0.resize(causality.len(), None);
+        if self.0.len() < happens_before.len() {
+            self.0.resize(happens_before.len(), None);
         }
 
         self.0[actor.id()] = Some(actor.self_version());
     }
 
     fn is_seen_by(&self, actor: &Actor) -> bool {
-        for (thread_id, version) in actor.causality().versions() {
+        for (thread_id, version) in actor.happens_before().versions() {
             let seen = self.0.get(thread_id)
                 .and_then(|maybe_version| *maybe_version)
                 .map(|v| v <= version)

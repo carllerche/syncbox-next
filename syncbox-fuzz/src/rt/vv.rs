@@ -96,7 +96,7 @@ impl<'a> Actor<'a> {
         self.id
     }
 
-    pub fn causality(&self) -> &VersionVec {
+    pub fn happens_before(&self) -> &VersionVec {
         &self.vv
     }
 

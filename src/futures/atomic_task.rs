@@ -7,6 +7,7 @@ cfg_if! {
             },
         };
     } else {
+        use CausalCell;
         use std::sync::atomic::AtomicUsize;
     }
 }
@@ -14,7 +15,7 @@ cfg_if! {
 use _futures::task::{self, Task};
 
 use std::fmt;
-use std::sync::atomic::Ordering::{Acquire, Release, AcqRel, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Release, AcqRel};
 
 /// A synchronization primitive for task notification.
 ///

@@ -1,5 +1,10 @@
 #[macro_use]
 extern crate cfg_if;
+extern crate crossbeam_utils;
+
+mod causal;
+
+pub use self::causal::CausalCell;
 
 cfg_if! {
     if #[cfg(feature = "futures")] {

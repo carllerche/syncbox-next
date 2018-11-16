@@ -10,4 +10,7 @@ members = [
 
 [dependencies]
 cfg-if = "0.1.6"
-"futures" = { version = "0.1.25", optional = true}
+futures = { version = "0.1.25", optional = true}
+
+# For futures/sephamore
+crossbeam-utils = "0.6.1"

@@ -107,6 +107,9 @@ impl Scheduler {
                     .next()
                     .is_none();
 
+                // Max execution depth
+                assert!(self.state.branches.len() <= 100_000);
+
                 self.state.branches.push(Branch {
                     switch: true,
                     index: i,

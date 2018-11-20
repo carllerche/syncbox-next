@@ -205,14 +205,6 @@ impl ThreadState {
         }
     }
 
-    pub fn join(&mut self, other: &VersionVec) {
-        self.causality.join(other);
-    }
-
-    pub fn causality(&self) -> &VersionVec {
-        &self.causality
-    }
-
     pub fn is_runnable(&self) -> bool {
         use self::Run::*;
 
@@ -316,13 +308,11 @@ impl ThreadHandle {
         })
     }
 
-    pub fn id(&self) -> usize {
-        self.thread_id
-    }
-
     pub fn unpark(&self) {
         CURRENT_EXECUTION.with(|exec| {
-            let th = &mut exec.threads[self.thread_id];
+            // Synchronize memory
+            let (active, th) = exec.active_thread2_mut(self.thread_id);
+            th.causality.join(&active.causality);
 
             if th.run.is_blocked() {
                 th.run = Run::Runnable;

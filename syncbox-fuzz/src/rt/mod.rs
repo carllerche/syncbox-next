@@ -48,13 +48,9 @@ where
 
 pub fn spawn<F>(f: F)
 where
-    F: FnOnce(ThreadHandle) + 'static,
+    F: FnOnce() + 'static,
 {
     Scheduler::spawn(f)
-}
-
-pub fn acquire(th: ThreadHandle) {
-    Scheduler::acquire(th);
 }
 
 /// Marks the current thread as blocked
@@ -82,6 +78,11 @@ where
     Execution::with(|execution| {
         f(&mut CausalContext::new(execution))
     })
+}
+
+pub fn seq_cst() {
+    branch();
+    causal_context(|ctx| ctx.seq_cst());
 }
 
 if_futures! {

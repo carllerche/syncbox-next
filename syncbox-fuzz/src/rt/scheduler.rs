@@ -1,4 +1,4 @@
-use rt::{Execution, Seed, Branch, Thread, ThreadHandle};
+use rt::{Execution, Seed, Branch, Thread};
 
 pub struct Scheduler {
     threads: Vec<Thread>,
@@ -37,26 +37,17 @@ impl Scheduler {
         Scheduler::branch();
     }
 
-    pub fn acquire(th: ThreadHandle) {
-        // Acquire the ordering
-        Execution::with(|exec| {
-            let (active, other) = exec.active_thread2_mut(th.id());
-
-            active.join(other.causality())
-        });
-    }
-
     /// Spawn a new thread on the current execution
     pub fn spawn<F>(th: F)
     where
-        F: FnOnce(ThreadHandle) + 'static,
+        F: FnOnce() + 'static,
     {
         Execution::with(|exec| {
-            let thread_handle = exec.create_thread();
+            exec.create_thread();
 
             let stack = exec.stack();
             let thread = Thread::new(stack, || {
-                th(thread_handle);
+                th();
                 Scheduler::thread_done();
             });
 

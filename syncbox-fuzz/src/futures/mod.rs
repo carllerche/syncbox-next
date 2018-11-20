@@ -9,5 +9,5 @@ pub fn spawn<F>(f: F)
 where
     F: Future<Item = (), Error = ()> + 'static,
 {
-    rt::spawn(move |_| rt::wait_future(f));
+    rt::spawn(move || rt::wait_future(f));
 }

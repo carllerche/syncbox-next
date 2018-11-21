@@ -231,7 +231,9 @@ impl FirstSeen {
             self.0.resize(happens_before.len(), None);
         }
 
-        self.0[actor.id()] = Some(actor.self_version());
+        if self.0[actor.id()].is_none() {
+            self.0[actor.id()] = Some(actor.self_version());
+        }
     }
 
     fn is_seen_by(&self, actor: &Actor) -> bool {

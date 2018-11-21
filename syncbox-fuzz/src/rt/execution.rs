@@ -5,7 +5,7 @@ use fringe::OsStack;
 
 use std::collections::VecDeque;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ThreadHandle {
     execution: ExecutionId,
     thread_id: usize,
@@ -21,7 +21,7 @@ scoped_mut_thread_local! {
     static CURRENT_EXECUTION: Execution
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct ExecutionId(usize);
 
 #[derive(Debug)]
@@ -80,6 +80,7 @@ pub struct Branch {
 enum Run {
     Runnable,
     Blocked,
+    Yield,
     Terminated,
 }
 
@@ -214,8 +215,34 @@ impl ThreadState {
         }
     }
 
+    pub fn set_runnable(&mut self) {
+        self.run = Run::Runnable;
+    }
+
     pub fn set_blocked(&mut self) {
         self.run = Run::Blocked;
+    }
+
+    fn is_blocked(&self) -> bool {
+        use self::Run::*;
+
+        match self.run {
+            Blocked => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_yield(&self) -> bool {
+        use self::Run::*;
+
+        match self.run {
+            Yield => true,
+            _ => false,
+        }
+    }
+
+    pub fn set_yield(&mut self) {
+        self.run = Run::Yield;
     }
 
     pub fn is_terminated(&self) -> bool {
@@ -314,20 +341,9 @@ impl ThreadHandle {
             let (active, th) = exec.active_thread2_mut(self.thread_id);
             th.causality.join(&active.causality);
 
-            if th.run.is_blocked() {
-                th.run = Run::Runnable;
+            if th.is_blocked() || th.is_yield() {
+                th.set_runnable();
             }
         });
-    }
-}
-
-impl Run {
-    fn is_blocked(&self) -> bool {
-        use self::Run::*;
-
-        match *self {
-            Blocked => true,
-            _ => false,
-        }
     }
 }

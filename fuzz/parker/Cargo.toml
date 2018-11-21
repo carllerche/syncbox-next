@@ -1,0 +1,9 @@
+[package]
+name = "parker"
+version = "0.1.0"
+authors = ["Carl Lerche <me@carllerche.com>"]
+publish = false
+
+[dependencies]
+cfg-if = "0.1.6"
+syncbox-fuzz = { path = "../../syncbox-fuzz" }

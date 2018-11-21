@@ -10,6 +10,7 @@ members = [
   # Fuzzing
   "fuzz/fuzz-atomic-task",
   "fuzz/semaphore",
+  "fuzz/parker",
 ]
 
 [dependencies]

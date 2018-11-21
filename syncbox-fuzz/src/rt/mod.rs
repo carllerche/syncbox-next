@@ -60,7 +60,11 @@ pub fn park() {
 
 /// Add an execution branch point.
 pub fn branch() {
-    Scheduler::branch();
+    Scheduler::branch(false);
+}
+
+pub fn yield_now() {
+    Scheduler::branch(true);
 }
 
 /// Critical section, may not branch.

@@ -34,7 +34,7 @@ impl Scheduler {
             exec.active_thread_mut().set_blocked();
         });
 
-        Scheduler::branch();
+        Scheduler::branch(false);
     }
 
     /// Spawn a new thread on the current execution
@@ -56,9 +56,14 @@ impl Scheduler {
     }
 
     /// Branch the execution
-    pub fn branch() {
+    pub fn branch(is_yield: bool) {
         Execution::with(|exec| {
             assert!(!exec.active_thread().is_critical(), "in critical section");
+
+            if is_yield {
+                exec.active_thread_mut().set_yield();
+            }
+
         });
 
         Thread::suspend();
@@ -75,6 +80,13 @@ impl Scheduler {
             if self.schedule() {
                 // Execution complete
                 return;
+            }
+
+            // Release yielded threads
+            for th in self.state.threads.iter_mut() {
+                if th.is_yield() {
+                    th.set_runnable();
+                }
             }
 
             self.tick();
@@ -99,7 +111,7 @@ impl Scheduler {
                     .is_none();
 
                 // Max execution depth
-                assert!(self.state.branches.len() <= 100_000);
+                assert!(self.state.branches.len() <= 1_000_000);
 
                 self.state.branches.push(Branch {
                     switch: true,
@@ -113,9 +125,9 @@ impl Scheduler {
             }
         }
 
-        for th in self.state.threads() {
+        for th in self.state.threads.iter() {
             if !th.is_terminated() {
-                panic!("deadlock");
+                panic!("deadlock; threads={:?}", self.state.threads);
             }
         }
 

@@ -96,7 +96,15 @@ where
     }
 
     pub fn compare_and_swap(&self, current: T, new: T, order: Ordering) -> T {
-        match self.compare_exchange(current, new, order, order) {
+        use self::Ordering::*;
+
+        let failure = match order {
+            Relaxed | Release => Relaxed,
+            Acquire | AcqRel => Acquire,
+            _ => SeqCst,
+        };
+
+        match self.compare_exchange(current, new, order, failure) {
             Ok(v) => v,
             Err(v) => v,
         }

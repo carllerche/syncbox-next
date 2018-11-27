@@ -53,7 +53,6 @@ impl Scheduler {
 
         self.threads.push(Thread::new(stack, move || {
             f();
-            Scheduler::thread_done();
         }));
 
         loop {
@@ -71,13 +70,6 @@ impl Scheduler {
 
             self.tick(execution);
         }
-    }
-
-    /// TODO: Delete?
-    fn thread_done() {
-        CURRENT_EXECUTION.with(|execution| {
-            execution.active_thread_mut().set_terminated();
-        });
     }
 
     fn tick(&mut self, execution: &mut Execution) {
@@ -109,7 +101,6 @@ fn tick(
 
         threads.push(Thread::new(stack, || {
             th.call();
-            Scheduler::thread_done();
         }));
 
         execution.active_thread = thread_id;

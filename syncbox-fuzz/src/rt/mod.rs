@@ -23,7 +23,10 @@ where
     F: Fn() + Sync + Send + 'static,
 {
     let mut execution = Execution::new();
-    let mut scheduler = Scheduler::new(f);
+    let mut scheduler = Scheduler::new(move || {
+        f();
+        thread_done();
+    });
 
     scheduler.run(&mut execution);
 
@@ -46,7 +49,10 @@ where
 {
     Scheduler::with_execution(|execution| {
         execution.create_thread();
-        execution.queued_spawn.push_back(Box::new(f));
+        execution.queued_spawn.push_back(Box::new(move || {
+            f();
+            thread_done();
+        }));
     })
 }
 
@@ -137,4 +143,10 @@ if_futures! {
             }
         }
     }
+}
+
+fn thread_done() {
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_terminated();
+    });
 }

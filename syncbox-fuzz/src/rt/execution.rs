@@ -1,7 +1,8 @@
-use rt::thread::Thread;
+use rt::FnBox;
 use rt::vv::{Actor, VersionVec};
 
 use std::collections::VecDeque;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ThreadHandle {
@@ -12,7 +13,6 @@ pub struct ThreadHandle {
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct ExecutionId(usize);
 
-#[derive(Debug)]
 pub struct Execution {
     /// Execution identifier
     pub id: ExecutionId,
@@ -40,7 +40,7 @@ pub struct Execution {
     pub seq_cst_causality: VersionVec,
 
     /// Queue of spawned threads that have not yet been added to the execution.
-    pub queued_spawn: VecDeque<Thread>,
+    pub queued_spawn: VecDeque<Box<FnBox>>,
 }
 
 #[derive(Debug)]
@@ -110,10 +110,6 @@ impl Execution {
 
     pub fn id(&self) -> &ExecutionId {
         &self.id
-    }
-
-    pub fn spawn_thread(&mut self, thread: Thread) {
-        self.queued_spawn.push_back(thread);
     }
 
     pub fn unpark_thread(&mut self, thread_id: usize) {
@@ -227,6 +223,20 @@ impl Execution {
 
     pub fn unset_critical(&mut self) {
         self.active_thread_mut().critical = false;
+    }
+}
+
+impl fmt::Debug for Execution {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Execution")
+            .field("id", &self.id)
+            .field("branches", &self.branches)
+            .field("branches_pos", &self.branches_pos)
+            .field("threads", &self.threads)
+            .field("active_thread", &self.active_thread)
+            .field("seq_cst_causality", &self.seq_cst_causality)
+            .field("queued_spawn", &"...")
+            .finish()
     }
 }
 

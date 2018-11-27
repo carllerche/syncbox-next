@@ -43,6 +43,7 @@ impl Scheduler {
         }
     }
 
+    /// Access the execution
     pub fn with_execution<F, R>(f: F) -> R
     where
         F: FnOnce(&mut Execution) -> R,
@@ -50,33 +51,9 @@ impl Scheduler {
         CURRENT.with(|state| f(&mut state.execution))
     }
 
-    /// Spawn a new thread on the current execution
-    pub fn spawn<F>(th: F)
-    where
-        F: FnOnce() + 'static,
-    {
-        CURRENT.with(|state| {
-            state.execution.create_thread();
-
-            let stack = state.stack();
-            let thread = Thread::new(stack, || {
-                th();
-                Scheduler::thread_done();
-            });
-
-            state.execution.spawn_thread(thread);
-        })
-    }
-
     /// Perform a context switch
     pub fn switch() {
         Thread::suspend();
-    }
-
-    fn thread_done() {
-        CURRENT.with(|state| {
-            state.execution.active_thread_mut().set_terminated();
-        });
     }
 
     pub fn run(&mut self) {
@@ -112,6 +89,12 @@ impl Scheduler {
         self.state.execution.step()
     }
 
+    fn thread_done() {
+        CURRENT.with(|state| {
+            state.execution.active_thread_mut().set_terminated();
+        });
+    }
+
     fn tick(&mut self) {
         tick(&mut self.state, &mut self.threads);
     }
@@ -133,7 +116,12 @@ fn tick(state: &mut State, threads: &mut Vec<Thread>) {
 
         assert!(state.execution.threads[thread_id].is_runnable());
 
-        threads.push(th);
+        let stack = state.stack();
+
+        threads.push(Thread::new(stack, || {
+            th.call();
+            Scheduler::thread_done();
+        }));
 
         state.execution.active_thread = thread_id;
         tick(state, threads);

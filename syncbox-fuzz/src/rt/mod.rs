@@ -1,10 +1,12 @@
 mod execution;
+mod fn_box;
 pub mod oneshot;
 mod scheduler;
 mod synchronize;
 mod thread;
 mod vv;
 
+use self::fn_box::FnBox;
 pub use self::synchronize::Synchronize;
 pub use self::execution::{ThreadHandle};
 pub use self::vv::{Actor, CausalContext, VersionVec};
@@ -41,7 +43,10 @@ pub fn spawn<F>(f: F)
 where
     F: FnOnce() + 'static,
 {
-    Scheduler::spawn(f)
+    Scheduler::with_execution(|execution| {
+        execution.create_thread();
+        execution.queued_spawn.push_back(Box::new(f));
+    })
 }
 
 /// Marks the current thread as blocked

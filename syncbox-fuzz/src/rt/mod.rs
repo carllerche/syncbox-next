@@ -55,7 +55,11 @@ where
 
 /// Marks the current thread as blocked
 pub fn park() {
-    Scheduler::park()
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_blocked();
+    });
+
+    Scheduler::branch(false);
 }
 
 /// Add an execution branch point.
@@ -76,7 +80,7 @@ where
 
     impl Drop for Reset {
         fn drop(&mut self) {
-            Execution::with(|execution| {
+            Scheduler::with_execution(|execution| {
                 execution.unset_critical();
             });
         }
@@ -84,7 +88,7 @@ where
 
     let _reset = Reset;
 
-    Execution::with(|execution| {
+    Scheduler::with_execution(|execution| {
         execution.set_critical();
     });
 
@@ -95,7 +99,7 @@ pub fn causal_context<F, R>(f: F) -> R
 where
     F: FnOnce(&mut CausalContext) -> R
 {
-    Execution::with(|execution| {
+    Scheduler::with_execution(|execution| {
         f(&mut CausalContext::new(execution))
     })
 }

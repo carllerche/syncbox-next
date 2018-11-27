@@ -1,8 +1,6 @@
 use rt::thread::Thread;
 use rt::vv::{Actor, VersionVec};
 
-use fringe::OsStack;
-
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -14,11 +12,6 @@ pub struct ThreadHandle {
 #[derive(Debug)]
 pub struct Seed {
     branches: VecDeque<Branch>,
-    stacks: Vec<OsStack>,
-}
-
-scoped_mut_thread_local! {
-    static CURRENT_EXECUTION: Execution
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -47,9 +40,6 @@ pub struct Execution {
 
     /// Queue of spawned threads that have not yet been added to the execution.
     pub queued_spawn: VecDeque<Thread>,
-
-    /// Stack cache.
-    pub stacks: Vec<OsStack>,
 }
 
 #[derive(Debug)]
@@ -96,22 +86,7 @@ impl Execution {
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
             queued_spawn: VecDeque::new(),
-            stacks: seed.stacks,
         }
-    }
-
-    pub fn with<F, R>(f: F) -> R
-    where
-        F: FnOnce(&mut Execution) -> R,
-    {
-        CURRENT_EXECUTION.with(f)
-    }
-
-    pub fn enter<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce() -> R
-    {
-        CURRENT_EXECUTION.set(self, f)
     }
 
     pub fn create_thread(&mut self) -> ThreadHandle {
@@ -133,6 +108,16 @@ impl Execution {
 
     pub fn spawn_thread(&mut self, thread: Thread) {
         self.queued_spawn.push_back(thread);
+    }
+
+    pub fn unpark_thread(&mut self, thread_id: usize) {
+        // Synchronize memory
+        let (active, th) = self.active_thread2_mut(thread_id);
+        th.causality.join(&active.causality);
+
+        if th.is_blocked() || th.is_yield() {
+            th.set_runnable();
+        }
     }
 
     pub fn active_thread(&self) -> &ThreadState {
@@ -158,21 +143,10 @@ impl Execution {
         }
     }
 
-    pub fn stack(&mut self) -> OsStack {
-        self.stacks.pop()
-            .unwrap_or_else(|| {
-                OsStack::new(1 << 16).unwrap()
-            })
-    }
-
     pub(crate) fn next_seed(&mut self) -> Option<Seed> {
-        use std::mem::replace;
-
         let mut ret: VecDeque<_> = self.branches.iter()
             .map(|b| b.clone())
             .collect();
-
-        let stacks = replace(&mut self.stacks, vec![]);
 
         while !ret.is_empty() {
             let last = ret.len() - 1;
@@ -182,7 +156,6 @@ impl Execution {
             if !ret[last].last {
                 return Some(Seed {
                     branches: ret,
-                    stacks,
                 });
             }
 
@@ -272,7 +245,6 @@ impl Seed {
     pub fn new() -> Seed {
         Seed {
             branches: VecDeque::new(),
-            stacks: vec![],
         }
     }
 }
@@ -305,25 +277,21 @@ impl ExecutionId {
     }
 }
 
+use rt::Scheduler;
+
 impl ThreadHandle {
     pub fn current() -> ThreadHandle {
-        Execution::with(|exec| {
+        Scheduler::with_execution(|execution| {
             ThreadHandle {
-                execution: exec.id().clone(),
-                thread_id: exec.active_thread,
+                execution: execution.id().clone(),
+                thread_id: execution.active_thread,
             }
         })
     }
 
     pub fn unpark(&self) {
-        Execution::with(|exec| {
-            // Synchronize memory
-            let (active, th) = exec.active_thread2_mut(self.thread_id);
-            th.causality.join(&active.causality);
-
-            if th.is_blocked() || th.is_yield() {
-                th.set_runnable();
-            }
+        Scheduler::with_execution(|execution| {
+            execution.unpark_thread(self.thread_id);
         });
     }
 }

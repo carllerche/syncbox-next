@@ -68,17 +68,8 @@ impl Scheduler {
         })
     }
 
-    /// Branch the execution
-    pub fn branch(is_yield: bool) {
-        CURRENT.with(|state| {
-            assert!(!state.execution.active_thread().is_critical(), "in critical section");
-
-            if is_yield {
-                state.execution.active_thread_mut().set_yield();
-            }
-
-        });
-
+    /// Perform a context switch
+    pub fn switch() {
         Thread::suspend();
     }
 

@@ -22,9 +22,11 @@ pub struct Execution {
 
     /// Current execution's position in the branch index.
     ///
-    /// When the execution starts, this is zero, but `branches` might not be empty.
+    /// When the execution starts, this is zero, but `branches` might not be
+    /// empty.
     ///
-    /// In order to perform an exhaustive search, the execution is seeded with a set of branches.
+    /// In order to perform an exhaustive search, the execution is seeded with a
+    /// set of branches.
     pub branches_pos: usize,
 
     /// State for each thread
@@ -33,8 +35,8 @@ pub struct Execution {
     /// Currently scheduled thread
     pub active_thread: usize,
 
-    /// Sequential consistency causality. All sequentially consistent operations synchronize with
-    /// this causality.
+    /// Sequential consistency causality. All sequentially consistent operations
+    /// synchronize with this causality.
     pub seq_cst_causality: VersionVec,
 
     /// Queue of spawned threads that have not yet been added to the execution.
@@ -74,6 +76,10 @@ enum Run {
 }
 
 impl Execution {
+    /// Create a new execution.
+    ///
+    /// This is only called at the start of a fuzz run. The same instance is
+    /// reused across permutations.
     pub fn new() -> Execution {
         let vv = VersionVec::root();
 
@@ -88,6 +94,7 @@ impl Execution {
         }
     }
 
+    /// Create state to track a new thread
     pub fn create_thread(&mut self) -> ThreadHandle {
         let mut causality = self.active_thread_mut().causality.clone();
         let thread_id = self.threads.len();
@@ -117,10 +124,6 @@ impl Execution {
         if th.is_blocked() || th.is_yield() {
             th.set_runnable();
         }
-    }
-
-    pub fn active_thread(&self) -> &ThreadState {
-        &self.threads[self.active_thread]
     }
 
     pub fn active_thread_mut(&mut self) -> &mut ThreadState {
@@ -286,11 +289,6 @@ impl ThreadState {
 
     pub fn set_terminated(&mut self) {
         self.run = Run::Terminated;
-    }
-
-    /// Returns `true` if the thread is in a critical section.
-    pub fn is_critical(&self) -> bool {
-        self.critical
     }
 }
 

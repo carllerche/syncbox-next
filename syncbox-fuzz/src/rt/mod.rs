@@ -50,16 +50,20 @@ pub fn park() {
         execution.active_thread_mut().set_blocked();
     });
 
-    Scheduler::branch(false);
+    Scheduler::switch();
 }
 
 /// Add an execution branch point.
 pub fn branch() {
-    Scheduler::branch(false);
+    Scheduler::switch();
 }
 
 pub fn yield_now() {
-    Scheduler::branch(true);
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_yield();
+    });
+
+    Scheduler::switch();
 }
 
 /// Critical section, may not branch.

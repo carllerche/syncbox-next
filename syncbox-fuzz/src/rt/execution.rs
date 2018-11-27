@@ -9,11 +9,6 @@ pub struct ThreadHandle {
     thread_id: usize,
 }
 
-#[derive(Debug)]
-pub struct Seed {
-    branches: VecDeque<Branch>,
-}
-
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct ExecutionId(usize);
 
@@ -22,11 +17,15 @@ pub struct Execution {
     /// Execution identifier
     pub id: ExecutionId,
 
-    /// Branching start point
-    pub seed: VecDeque<Branch>,
-
     /// Path taken
     pub branches: Vec<Branch>,
+
+    /// Current execution's position in the branch index.
+    ///
+    /// When the execution starts, this is zero, but `branches` might not be empty.
+    ///
+    /// In order to perform an exhaustive search, the execution is seeded with a set of branches.
+    pub branches_pos: usize,
 
     /// State for each thread
     pub threads: Vec<ThreadState>,
@@ -75,13 +74,13 @@ enum Run {
 }
 
 impl Execution {
-    pub fn new(seed: Seed) -> Execution {
+    pub fn new() -> Execution {
         let vv = VersionVec::root();
 
         Execution {
             id: ExecutionId::new(),
-            seed: seed.branches,
             branches: vec![],
+            branches_pos: 0,
             threads: vec![ThreadState::new(vv)],
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
@@ -143,26 +142,80 @@ impl Execution {
         }
     }
 
-    pub(crate) fn next_seed(&mut self) -> Option<Seed> {
-        let mut ret: VecDeque<_> = self.branches.iter()
-            .map(|b| b.clone())
-            .collect();
+    /// Resets the execution state for the next execution run
+    pub fn step(&mut self) -> bool {
+        self.id = ExecutionId::new();
+        self.branches_pos = 0;
+        self.threads.clear();
+        self.active_thread = 0;
+        self.seq_cst_causality = VersionVec::new();
 
-        while !ret.is_empty() {
-            let last = ret.len() - 1;
+        self.threads.push(ThreadState::new(VersionVec::root()));
 
-            ret[last].index += 1;
+        assert!(self.queued_spawn.is_empty());
 
-            if !ret[last].last {
-                return Some(Seed {
-                    branches: ret,
-                });
+        while !self.branches.is_empty() {
+            let last = self.branches.len() - 1;
+
+            if !self.branches[last].last {
+                self.branches[last].index += 1;
+                return true;
             }
 
-            ret.pop_back();
+            self.branches.pop();
         }
 
-        None
+        false
+    }
+
+    /// Schedule a thread for execution.
+    pub fn schedule(&mut self) -> bool {
+        let (start, push) = self.branches.get(self.branches_pos)
+            .map(|branch| {
+                assert!(branch.switch);
+                (branch.index, false)
+            })
+            .unwrap_or((0, true));
+
+        debug_assert!(start < self.threads.len());
+
+        for (mut i, th) in self.threads[start..].iter().enumerate() {
+            i += start;
+
+            if th.is_runnable() {
+                // TODO: Maybe this shouldn't be computed every time.
+                let last = self.threads[i+1..].iter()
+                    .filter(|th| th.is_runnable())
+                    .next()
+                    .is_none();
+
+                if push {
+                    // Max execution depth
+                    assert!(self.branches.len() <= 1_000_000);
+
+                    self.branches.push(Branch {
+                        switch: true,
+                        index: i,
+                        last,
+                    });
+                } else {
+                    self.branches[self.branches_pos].last = last;
+                }
+
+                self.active_thread = i;
+                self.branches_pos += 1;
+
+                return false;
+            }
+        }
+
+        for th in self.threads.iter() {
+            if !th.is_terminated() {
+                panic!("deadlock; threads={:?}", self.threads);
+            }
+        }
+
+        true
     }
 
     pub fn set_critical(&mut self) {
@@ -238,14 +291,6 @@ impl ThreadState {
     /// Returns `true` if the thread is in a critical section.
     pub fn is_critical(&self) -> bool {
         self.critical
-    }
-}
-
-impl Seed {
-    pub fn new() -> Seed {
-        Seed {
-            branches: VecDeque::new(),
-        }
     }
 }
 

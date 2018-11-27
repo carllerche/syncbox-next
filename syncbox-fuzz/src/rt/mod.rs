@@ -12,37 +12,28 @@ pub use self::vv::{Actor, CausalContext, VersionVec};
 // TODO: Cleanup?
 pub use self::execution::Branch;
 
-use self::execution::{Execution, Seed};
+use self::execution::Execution;
 use self::scheduler::Scheduler;
 use self::thread::Thread;
-
-use std::sync::Arc;
 
 pub fn check<F>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
-    let f = Arc::new(f);
+    let mut scheduler = Scheduler::new(f);
 
-    let mut execution = {
-        let f = f.clone();
-        Scheduler::new(move || f())
-    };
-
-    execution.run();
+    scheduler.run();
 
     let mut i = 0;
 
-    while let Some(next) = execution.next_seed() {
+    while scheduler.step() {
         i += 1;
 
         if i % 10_000 == 0 {
             println!("+++++++++ iter {}", i);
         }
 
-        let f = f.clone();
-        execution = Scheduler::with_seed(next, move || f());
-        execution.run();
+        scheduler.run();
     }
 }
 

@@ -1,7 +1,6 @@
 use rt::{Branch, Execution};
 
 use std::cmp;
-use std::collections::VecDeque;
 use std::ops;
 
 #[derive(Debug, Clone, PartialOrd, Eq, PartialEq)]
@@ -22,8 +21,8 @@ pub struct CausalContext<'a> {
     seq_cst_causality: &'a mut VersionVec,
 
     // TODO: Cleanup
-    pub seed: &'a mut VecDeque<Branch>,
     pub branches: &'a mut Vec<Branch>,
+    pub branches_pos: &'a mut usize,
 }
 
 static NULL: usize = 0;
@@ -122,8 +121,8 @@ impl<'a> CausalContext<'a> {
                 id: execution.active_thread,
             },
             seq_cst_causality: &mut execution.seq_cst_causality,
-            seed: &mut execution.seed,
             branches: &mut execution.branches,
+            branches_pos: &mut execution.branches_pos,
         }
     }
 

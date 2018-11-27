@@ -12,7 +12,7 @@ pub use self::vv::{Actor, CausalContext, VersionVec};
 // TODO: Cleanup?
 pub use self::execution::Branch;
 
-use self::execution::{Execution, Seed, ThreadState};
+use self::execution::{Execution, Seed};
 use self::scheduler::Scheduler;
 use self::thread::Thread;
 
@@ -72,7 +72,23 @@ pub fn critical<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    ThreadState::critical(f)
+    struct Reset;
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            Execution::with(|execution| {
+                execution.unset_critical();
+            });
+        }
+    }
+
+    let _reset = Reset;
+
+    Execution::with(|execution| {
+        execution.set_critical();
+    });
+
+    f()
 }
 
 pub fn causal_context<F, R>(f: F) -> R

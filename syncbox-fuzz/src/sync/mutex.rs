@@ -2,9 +2,10 @@ use rt::{self, ThreadHandle};
 
 use std::cell::{UnsafeCell, Cell, RefCell};
 use std::collections::VecDeque;
-use std::sync::{LockResult, TryLockResult};
+use std::sync::LockResult;
 
 pub struct Mutex<T> {
+    #[allow(unused)]
     data: UnsafeCell<T>,
     locked: Cell<Option<ThreadHandle>>,
     waiters: RefCell<VecDeque<ThreadHandle>>,

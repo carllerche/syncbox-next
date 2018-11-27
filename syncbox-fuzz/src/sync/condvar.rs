@@ -44,7 +44,7 @@ impl Condvar {
         Ok(guard)
     }
 
-    pub fn wait_timeout<'a, T>(&self, guard: MutexGuard<'a, T>, dur: Duration)
+    pub fn wait_timeout<'a, T>(&self, _guard: MutexGuard<'a, T>, _dur: Duration)
         -> LockResult<(MutexGuard<'a, T>, WaitTimeoutResult)>
     {
         unimplemented!();

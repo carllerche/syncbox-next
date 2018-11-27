@@ -158,10 +158,6 @@ impl Execution {
         }
     }
 
-    pub fn threads(&mut self) -> &mut [ThreadState] {
-        &mut self.threads
-    }
-
     pub fn stack(&mut self) -> OsStack {
         self.stacks.pop()
             .unwrap_or_else(|| {
@@ -194,6 +190,14 @@ impl Execution {
         }
 
         None
+    }
+
+    pub fn set_critical(&mut self) {
+        self.active_thread_mut().critical = true;
+    }
+
+    pub fn unset_critical(&mut self) {
+        self.active_thread_mut().critical = false;
     }
 }
 
@@ -262,30 +266,6 @@ impl ThreadState {
     pub fn is_critical(&self) -> bool {
         self.critical
     }
-
-    /// Critical section, may not branch
-    pub fn critical<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        struct Reset;
-
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                Execution::with(|exec| {
-                    exec.active_thread_mut().critical = false;
-                });
-            }
-        }
-
-        let _reset = Reset;
-
-        Execution::with(|exec| {
-            exec.active_thread_mut().critical = true;
-        });
-
-        f()
-    }
 }
 
 impl Seed {
@@ -336,7 +316,7 @@ impl ThreadHandle {
     }
 
     pub fn unpark(&self) {
-        CURRENT_EXECUTION.with(|exec| {
+        Execution::with(|exec| {
             // Synchronize memory
             let (active, th) = exec.active_thread2_mut(self.thread_id);
             th.causality.join(&active.causality);

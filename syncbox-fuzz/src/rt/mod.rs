@@ -22,20 +22,21 @@ pub fn check<F>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
+    let mut execution = Execution::new();
     let mut scheduler = Scheduler::new(f);
 
-    scheduler.run();
+    scheduler.run(&mut execution);
 
     let mut i = 0;
 
-    while scheduler.step() {
+    while execution.step() {
         i += 1;
 
         if i % 10_000 == 0 {
             println!("+++++++++ iter {}", i);
         }
 
-        scheduler.run();
+        scheduler.run(&mut execution);
     }
 }
 

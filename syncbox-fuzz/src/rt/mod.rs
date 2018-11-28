@@ -3,7 +3,6 @@ mod fn_box;
 pub mod oneshot;
 mod scheduler;
 mod synchronize;
-mod thread;
 mod vv;
 
 use self::fn_box::FnBox;
@@ -16,7 +15,6 @@ pub use self::execution::Branch;
 
 use self::execution::Execution;
 use self::scheduler::Scheduler;
-use self::thread::Thread;
 
 const DEFAULT_MAX_THREADS: usize = 4;
 

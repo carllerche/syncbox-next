@@ -21,14 +21,21 @@ scoped_mut_thread_local! {
 
 impl Scheduler {
     /// Create an execution
-    pub fn new<F>(f: F) -> Scheduler
+    pub fn new<F>(capacity: usize, f: F) -> Scheduler
     where
         F: Fn() + Sync + Send + 'static,
     {
+        // Create the OS stacks
+        let stacks = (0..capacity)
+            .map(|_| {
+                OsStack::new(1 << 16).unwrap()
+            })
+            .collect();
+
         Scheduler {
             f: Arc::new(f),
             threads: vec![],
-            stacks: vec![],
+            stacks,
         }
     }
 
@@ -110,7 +117,5 @@ fn tick(
 
 fn stack(stacks: &mut Vec<OsStack>) -> OsStack {
     stacks.pop()
-        .unwrap_or_else(|| {
-            OsStack::new(1 << 16).unwrap()
-        })
+        .expect("max threads reached")
 }

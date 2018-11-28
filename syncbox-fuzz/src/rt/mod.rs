@@ -18,12 +18,14 @@ use self::execution::Execution;
 use self::scheduler::Scheduler;
 use self::thread::Thread;
 
+const DEFAULT_MAX_THREADS: usize = 4;
+
 pub fn check<F>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
     let mut execution = Execution::new();
-    let mut scheduler = Scheduler::new(move || {
+    let mut scheduler = Scheduler::new(DEFAULT_MAX_THREADS, move || {
         f();
         thread_done();
     });

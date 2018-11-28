@@ -5,7 +5,7 @@ use syncbox_fuzz::sync::atomic::AtomicUsize;
 use syncbox_fuzz::thread;
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering::{Acquire, Release, Relaxed, SeqCst};
+use std::sync::atomic::Ordering::SeqCst;
 
 #[test]
 fn fuzz_condvar() {
@@ -41,9 +41,7 @@ fn fuzz_condvar() {
 
         let mut guard = inc.mutex.lock().unwrap();
 
-        let mut i = 0;
         loop {
-            i += 1;
             let val = inc.num.load(SeqCst);
             if 1 == val {
                 break;

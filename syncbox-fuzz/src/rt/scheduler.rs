@@ -1,157 +1,95 @@
-use rt::{Execution, Seed, Branch, Thread};
+use rt::{Execution, Thread};
+
+use fringe::OsStack;
+
+use std::sync::Arc;
 
 pub struct Scheduler {
+    /// Initialize the execution
+    f: Arc<Fn() + Sync + Send>,
+
+    /// Threads
     threads: Vec<Thread>,
-    state: Execution,
+
+    /// Re-usable stacks
+    stacks: Vec<OsStack>,
+}
+
+scoped_mut_thread_local! {
+    static CURRENT_EXECUTION: Execution
 }
 
 impl Scheduler {
     /// Create an execution
-    pub fn new<F: FnOnce() + 'static>(main_thread: F) -> Scheduler {
-        Scheduler::with_seed(Seed::new(), main_thread)
-    }
-
-    /// Create an execution
-    pub fn with_seed<F>(seed: Seed, main_thread: F) -> Scheduler
+    pub fn new<F>(f: F) -> Scheduler
     where
-        F: FnOnce() + 'static,
+        F: Fn() + Sync + Send + 'static,
     {
-        let mut state = Execution::new(seed);
-
-        let th = Thread::new(state.stack(), move || {
-            main_thread();
-            Scheduler::thread_done();
-        });
-
         Scheduler {
-            threads: vec![th],
-            state,
+            f: Arc::new(f),
+            threads: vec![],
+            stacks: vec![],
         }
     }
 
-    pub fn park() {
-        Execution::with(|exec| {
-            exec.active_thread_mut().set_blocked();
-        });
-
-        Scheduler::branch(false);
-    }
-
-    /// Spawn a new thread on the current execution
-    pub fn spawn<F>(th: F)
+    /// Access the execution
+    pub fn with_execution<F, R>(f: F) -> R
     where
-        F: FnOnce() + 'static,
+        F: FnOnce(&mut Execution) -> R,
     {
-        Execution::with(|exec| {
-            exec.create_thread();
-
-            let stack = exec.stack();
-            let thread = Thread::new(stack, || {
-                th();
-                Scheduler::thread_done();
-            });
-
-            exec.spawn_thread(thread);
-        })
+        CURRENT_EXECUTION.with(|execution| f(execution))
     }
 
-    /// Branch the execution
-    pub fn branch(is_yield: bool) {
-        Execution::with(|exec| {
-            assert!(!exec.active_thread().is_critical(), "in critical section");
-
-            if is_yield {
-                exec.active_thread_mut().set_yield();
-            }
-
-        });
-
+    /// Perform a context switch
+    pub fn switch() {
         Thread::suspend();
     }
 
-    fn thread_done() {
-        Execution::with(|exec| {
-            exec.active_thread_mut().set_terminated();
-        });
-    }
+    pub fn run(&mut self, execution: &mut Execution) {
+        self.threads.clear();
 
-    pub fn run(&mut self) {
+        let f = self.f.clone();
+        let stack = stack(&mut self.stacks);
+
+        self.threads.push(Thread::new(stack, move || {
+            f();
+        }));
+
         loop {
-            if self.schedule() {
+            if execution.schedule() {
                 // Execution complete
                 return;
             }
 
             // Release yielded threads
-            for th in self.state.threads.iter_mut() {
+            for th in execution.threads.iter_mut() {
                 if th.is_yield() {
                     th.set_runnable();
                 }
             }
 
-            self.tick();
+            self.tick(execution);
         }
     }
 
-    fn schedule(&mut self) -> bool {
-        let start = self.state.seed.pop_front()
-            .map(|branch| {
-                assert!(branch.switch);
-                branch.index
-            })
-            .unwrap_or(0);
-
-        for (mut i, th) in self.state.threads[start..].iter().enumerate() {
-            i += start;
-
-            if th.is_runnable() {
-                let last = self.state.threads[i+1..].iter()
-                    .filter(|th| th.is_runnable())
-                    .next()
-                    .is_none();
-
-                // Max execution depth
-                assert!(self.state.branches.len() <= 1_000_000);
-
-                self.state.branches.push(Branch {
-                    switch: true,
-                    index: i,
-                    last,
-                });
-
-                self.state.active_thread = i;
-
-                return false;
-            }
-        }
-
-        for th in self.state.threads.iter() {
-            if !th.is_terminated() {
-                panic!("deadlock; threads={:?}", self.state.threads);
-            }
-        }
-
-        true
-    }
-
-    fn tick(&mut self) {
-        tick(&mut self.state, &mut self.threads);
-    }
-
-    pub(crate) fn next_seed(&mut self) -> Option<Seed> {
-        self.state.next_seed()
+    fn tick(&mut self, execution: &mut Execution) {
+        tick(execution, &mut self.threads, &mut self.stacks);
     }
 }
 
-fn tick(execution: &mut Execution, threads: &mut Vec<Thread>) {
+fn tick(
+    execution: &mut Execution,
+    threads: &mut Vec<Thread>,
+    stacks: &mut Vec<OsStack>)
+{
     let active_thread = execution.active_thread;
 
-    let maybe_stack = execution.enter(|| {
+    let maybe_stack = CURRENT_EXECUTION.set(execution, || {
         threads[active_thread].resume()
     });
 
     if let Some(stack) = maybe_stack {
-        execution.stacks.push(stack);
+        stacks.push(stack);
     }
 
     while let Some(th) = execution.queued_spawn.pop_front() {
@@ -159,9 +97,20 @@ fn tick(execution: &mut Execution, threads: &mut Vec<Thread>) {
 
         assert!(execution.threads[thread_id].is_runnable());
 
-        threads.push(th);
+        let stack = stack(stacks);
+
+        threads.push(Thread::new(stack, || {
+            th.call();
+        }));
 
         execution.active_thread = thread_id;
-        tick(execution, threads);
+        tick(execution, threads, stacks);
     }
+}
+
+fn stack(stacks: &mut Vec<OsStack>) -> OsStack {
+    stacks.pop()
+        .unwrap_or_else(|| {
+            OsStack::new(1 << 16).unwrap()
+        })
 }

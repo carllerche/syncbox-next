@@ -149,20 +149,26 @@ fn pick_write<'a, T>(
     let seq_cst = is_seq_cst(order);
     let lower_bound = newest_in_causality(writes, ctx, seq_cst);
 
-    let offset = ctx.seed.pop_front()
+    let (offset, push) = ctx.branches.get(*ctx.branches_pos)
         .map(|branch| {
             assert!(!branch.switch);
-            branch.index
+            (branch.index, false)
         })
-        .unwrap_or(0);
+        .unwrap_or((0, true));
 
     let last = writes.len() - 1 == lower_bound + offset;
 
-    ctx.branches.push(rt::Branch {
-        switch: false,
-        index: offset,
-        last,
-    });
+    if push {
+        ctx.branches.push(rt::Branch {
+            switch: false,
+            index: offset,
+            last,
+        });
+    } else {
+        ctx.branches[*ctx.branches_pos].last = last;
+    }
+
+    *ctx.branches_pos += 1;
 
     &mut writes[lower_bound + offset]
 }

@@ -1,10 +1,12 @@
 mod execution;
+mod fn_box;
 pub mod oneshot;
 mod scheduler;
 mod synchronize;
 mod thread;
 mod vv;
 
+use self::fn_box::FnBox;
 pub use self::synchronize::Synchronize;
 pub use self::execution::{ThreadHandle};
 pub use self::vv::{Actor, CausalContext, VersionVec};
@@ -12,37 +14,32 @@ pub use self::vv::{Actor, CausalContext, VersionVec};
 // TODO: Cleanup?
 pub use self::execution::Branch;
 
-use self::execution::{Execution, Seed, ThreadState};
+use self::execution::Execution;
 use self::scheduler::Scheduler;
 use self::thread::Thread;
-
-use std::sync::Arc;
 
 pub fn check<F>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
-    let f = Arc::new(f);
+    let mut execution = Execution::new();
+    let mut scheduler = Scheduler::new(move || {
+        f();
+        thread_done();
+    });
 
-    let mut execution = {
-        let f = f.clone();
-        Scheduler::new(move || f())
-    };
-
-    execution.run();
+    scheduler.run(&mut execution);
 
     let mut i = 0;
 
-    while let Some(next) = execution.next_seed() {
+    while execution.step() {
         i += 1;
 
         if i % 10_000 == 0 {
             println!("+++++++++ iter {}", i);
         }
 
-        let f = f.clone();
-        execution = Scheduler::with_seed(next, move || f());
-        execution.run();
+        scheduler.run(&mut execution);
     }
 }
 
@@ -50,21 +47,35 @@ pub fn spawn<F>(f: F)
 where
     F: FnOnce() + 'static,
 {
-    Scheduler::spawn(f)
+    Scheduler::with_execution(|execution| {
+        execution.create_thread();
+        execution.queued_spawn.push_back(Box::new(move || {
+            f();
+            thread_done();
+        }));
+    })
 }
 
 /// Marks the current thread as blocked
 pub fn park() {
-    Scheduler::park()
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_blocked();
+    });
+
+    Scheduler::switch();
 }
 
 /// Add an execution branch point.
 pub fn branch() {
-    Scheduler::branch(false);
+    Scheduler::switch();
 }
 
 pub fn yield_now() {
-    Scheduler::branch(true);
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_yield();
+    });
+
+    Scheduler::switch();
 }
 
 /// Critical section, may not branch.
@@ -72,14 +83,30 @@ pub fn critical<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    ThreadState::critical(f)
+    struct Reset;
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            Scheduler::with_execution(|execution| {
+                execution.unset_critical();
+            });
+        }
+    }
+
+    let _reset = Reset;
+
+    Scheduler::with_execution(|execution| {
+        execution.set_critical();
+    });
+
+    f()
 }
 
 pub fn causal_context<F, R>(f: F) -> R
 where
     F: FnOnce(&mut CausalContext) -> R
 {
-    Execution::with(|execution| {
+    Scheduler::with_execution(|execution| {
         f(&mut CausalContext::new(execution))
     })
 }
@@ -116,4 +143,10 @@ if_futures! {
             }
         }
     }
+}
+
+fn thread_done() {
+    Scheduler::with_execution(|execution| {
+        execution.active_thread_mut().set_terminated();
+    });
 }

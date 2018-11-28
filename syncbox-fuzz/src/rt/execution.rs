@@ -1,9 +1,8 @@
-use rt::thread::Thread;
+use rt::FnBox;
 use rt::vv::{Actor, VersionVec};
 
-use fringe::OsStack;
-
 use std::collections::VecDeque;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ThreadHandle {
@@ -11,29 +10,24 @@ pub struct ThreadHandle {
     thread_id: usize,
 }
 
-#[derive(Debug)]
-pub struct Seed {
-    branches: VecDeque<Branch>,
-    stacks: Vec<OsStack>,
-}
-
-scoped_mut_thread_local! {
-    static CURRENT_EXECUTION: Execution
-}
-
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct ExecutionId(usize);
 
-#[derive(Debug)]
 pub struct Execution {
     /// Execution identifier
     pub id: ExecutionId,
 
-    /// Branching start point
-    pub seed: VecDeque<Branch>,
-
     /// Path taken
     pub branches: Vec<Branch>,
+
+    /// Current execution's position in the branch index.
+    ///
+    /// When the execution starts, this is zero, but `branches` might not be
+    /// empty.
+    ///
+    /// In order to perform an exhaustive search, the execution is seeded with a
+    /// set of branches.
+    pub branches_pos: usize,
 
     /// State for each thread
     pub threads: Vec<ThreadState>,
@@ -41,15 +35,12 @@ pub struct Execution {
     /// Currently scheduled thread
     pub active_thread: usize,
 
-    /// Sequential consistency causality. All sequentially consistent operations synchronize with
-    /// this causality.
+    /// Sequential consistency causality. All sequentially consistent operations
+    /// synchronize with this causality.
     pub seq_cst_causality: VersionVec,
 
     /// Queue of spawned threads that have not yet been added to the execution.
-    pub queued_spawn: VecDeque<Thread>,
-
-    /// Stack cache.
-    pub stacks: Vec<OsStack>,
+    pub queued_spawn: VecDeque<Box<FnBox>>,
 }
 
 #[derive(Debug)]
@@ -85,35 +76,25 @@ enum Run {
 }
 
 impl Execution {
-    pub fn new(seed: Seed) -> Execution {
+    /// Create a new execution.
+    ///
+    /// This is only called at the start of a fuzz run. The same instance is
+    /// reused across permutations.
+    pub fn new() -> Execution {
         let vv = VersionVec::root();
 
         Execution {
             id: ExecutionId::new(),
-            seed: seed.branches,
             branches: vec![],
+            branches_pos: 0,
             threads: vec![ThreadState::new(vv)],
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
             queued_spawn: VecDeque::new(),
-            stacks: seed.stacks,
         }
     }
 
-    pub fn with<F, R>(f: F) -> R
-    where
-        F: FnOnce(&mut Execution) -> R,
-    {
-        CURRENT_EXECUTION.with(f)
-    }
-
-    pub fn enter<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce() -> R
-    {
-        CURRENT_EXECUTION.set(self, f)
-    }
-
+    /// Create state to track a new thread
     pub fn create_thread(&mut self) -> ThreadHandle {
         let mut causality = self.active_thread_mut().causality.clone();
         let thread_id = self.threads.len();
@@ -131,12 +112,14 @@ impl Execution {
         &self.id
     }
 
-    pub fn spawn_thread(&mut self, thread: Thread) {
-        self.queued_spawn.push_back(thread);
-    }
+    pub fn unpark_thread(&mut self, thread_id: usize) {
+        // Synchronize memory
+        let (active, th) = self.active_thread2_mut(thread_id);
+        th.causality.join(&active.causality);
 
-    pub fn active_thread(&self) -> &ThreadState {
-        &self.threads[self.active_thread]
+        if th.is_blocked() || th.is_yield() {
+            th.set_runnable();
+        }
     }
 
     pub fn active_thread_mut(&mut self) -> &mut ThreadState {
@@ -158,42 +141,102 @@ impl Execution {
         }
     }
 
-    pub fn threads(&mut self) -> &mut [ThreadState] {
-        &mut self.threads
-    }
+    /// Resets the execution state for the next execution run
+    pub fn step(&mut self) -> bool {
+        self.id = ExecutionId::new();
+        self.branches_pos = 0;
+        self.threads.clear();
+        self.active_thread = 0;
+        self.seq_cst_causality = VersionVec::new();
 
-    pub fn stack(&mut self) -> OsStack {
-        self.stacks.pop()
-            .unwrap_or_else(|| {
-                OsStack::new(1 << 16).unwrap()
-            })
-    }
+        self.threads.push(ThreadState::new(VersionVec::root()));
 
-    pub(crate) fn next_seed(&mut self) -> Option<Seed> {
-        use std::mem::replace;
+        assert!(self.queued_spawn.is_empty());
 
-        let mut ret: VecDeque<_> = self.branches.iter()
-            .map(|b| b.clone())
-            .collect();
+        while !self.branches.is_empty() {
+            let last = self.branches.len() - 1;
 
-        let stacks = replace(&mut self.stacks, vec![]);
-
-        while !ret.is_empty() {
-            let last = ret.len() - 1;
-
-            ret[last].index += 1;
-
-            if !ret[last].last {
-                return Some(Seed {
-                    branches: ret,
-                    stacks,
-                });
+            if !self.branches[last].last {
+                self.branches[last].index += 1;
+                return true;
             }
 
-            ret.pop_back();
+            self.branches.pop();
         }
 
-        None
+        false
+    }
+
+    /// Schedule a thread for execution.
+    pub fn schedule(&mut self) -> bool {
+        let (start, push) = self.branches.get(self.branches_pos)
+            .map(|branch| {
+                assert!(branch.switch);
+                (branch.index, false)
+            })
+            .unwrap_or((0, true));
+
+        debug_assert!(start < self.threads.len());
+
+        for (mut i, th) in self.threads[start..].iter().enumerate() {
+            i += start;
+
+            if th.is_runnable() {
+                // TODO: Maybe this shouldn't be computed every time.
+                let last = self.threads[i+1..].iter()
+                    .filter(|th| th.is_runnable())
+                    .next()
+                    .is_none();
+
+                if push {
+                    // Max execution depth
+                    assert!(self.branches.len() <= 1_000_000);
+
+                    self.branches.push(Branch {
+                        switch: true,
+                        index: i,
+                        last,
+                    });
+                } else {
+                    self.branches[self.branches_pos].last = last;
+                }
+
+                self.active_thread = i;
+                self.branches_pos += 1;
+
+                return false;
+            }
+        }
+
+        for th in self.threads.iter() {
+            if !th.is_terminated() {
+                panic!("deadlock; threads={:?}", self.threads);
+            }
+        }
+
+        true
+    }
+
+    pub fn set_critical(&mut self) {
+        self.active_thread_mut().critical = true;
+    }
+
+    pub fn unset_critical(&mut self) {
+        self.active_thread_mut().critical = false;
+    }
+}
+
+impl fmt::Debug for Execution {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Execution")
+            .field("id", &self.id)
+            .field("branches", &self.branches)
+            .field("branches_pos", &self.branches_pos)
+            .field("threads", &self.threads)
+            .field("active_thread", &self.active_thread)
+            .field("seq_cst_causality", &self.seq_cst_causality)
+            .field("queued_spawn", &"...")
+            .finish()
     }
 }
 
@@ -257,44 +300,6 @@ impl ThreadState {
     pub fn set_terminated(&mut self) {
         self.run = Run::Terminated;
     }
-
-    /// Returns `true` if the thread is in a critical section.
-    pub fn is_critical(&self) -> bool {
-        self.critical
-    }
-
-    /// Critical section, may not branch
-    pub fn critical<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        struct Reset;
-
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                Execution::with(|exec| {
-                    exec.active_thread_mut().critical = false;
-                });
-            }
-        }
-
-        let _reset = Reset;
-
-        Execution::with(|exec| {
-            exec.active_thread_mut().critical = true;
-        });
-
-        f()
-    }
-}
-
-impl Seed {
-    pub fn new() -> Seed {
-        Seed {
-            branches: VecDeque::new(),
-            stacks: vec![],
-        }
-    }
 }
 
 impl ExecutionId {
@@ -325,25 +330,21 @@ impl ExecutionId {
     }
 }
 
+use rt::Scheduler;
+
 impl ThreadHandle {
     pub fn current() -> ThreadHandle {
-        Execution::with(|exec| {
+        Scheduler::with_execution(|execution| {
             ThreadHandle {
-                execution: exec.id().clone(),
-                thread_id: exec.active_thread,
+                execution: execution.id().clone(),
+                thread_id: execution.active_thread,
             }
         })
     }
 
     pub fn unpark(&self) {
-        CURRENT_EXECUTION.with(|exec| {
-            // Synchronize memory
-            let (active, th) = exec.active_thread2_mut(self.thread_id);
-            th.causality.join(&active.causality);
-
-            if th.is_blocked() || th.is_yield() {
-                th.set_runnable();
-            }
+        Scheduler::with_execution(|execution| {
+            execution.unpark_thread(self.thread_id);
         });
     }
 }

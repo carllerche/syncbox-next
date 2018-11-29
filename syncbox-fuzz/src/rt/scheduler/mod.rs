@@ -24,8 +24,8 @@ impl Scheduler {
     pub fn new(capacity: usize) -> Scheduler {
         assert!(capacity > 0);
         Scheduler {
-            // kind: Fringe(fringe::Scheduler::new(capacity)),
-            kind: Std(std::Scheduler::new(capacity)),
+            kind: Fringe(fringe::Scheduler::new(capacity)),
+            // kind: Std(std::Scheduler::new(capacity)),
         }
     }
 

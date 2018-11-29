@@ -20,12 +20,25 @@ use std::sync::Arc;
 
 const DEFAULT_MAX_THREADS: usize = 4;
 
+const FILE: &str = "syncbox-fuzz.txt";
+
 pub fn check<F>(f: F)
 where
     F: Fn() + Sync + Send + 'static,
 {
+    use std::fs::File;
+    use std::io::prelude::*;
+    use serde_json;
+
     let mut execution = Execution::new();
     let mut scheduler = Scheduler::new(DEFAULT_MAX_THREADS);
+
+    if false {
+        let mut file = File::open(FILE).unwrap();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        execution.branches = serde_json::from_str(&contents).unwrap();
+    }
 
     let f = Arc::new(f);
 
@@ -36,6 +49,13 @@ where
 
         if i % 10_000 == 0 {
             println!(" ===== iteration {} =====", i);
+
+            if false {
+                let serialized = serde_json::to_string(&execution.branches).unwrap();
+
+                let mut file = File::create(FILE).unwrap();
+                file.write_all(serialized.as_bytes()).unwrap();
+            }
         }
 
         let f = f.clone();
@@ -58,12 +78,7 @@ where
     Scheduler::with_execution(|execution| {
         execution.create_thread();
     });
-    /*
-        execution.queued_spawn.push_back(Box::new(move || {
-            f();
-            thread_done();
-        }));
-     */
+
     Scheduler::spawn(Box::new(move || {
         f();
         thread_done();

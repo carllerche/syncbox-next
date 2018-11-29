@@ -5,6 +5,10 @@ extern crate fringe;
 extern crate scoped_tls;
 #[macro_use]
 extern crate scoped_mut_tls;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 
 macro_rules! if_futures {
     ($($t:tt)*) => {
@@ -30,3 +34,5 @@ if_futures! {
 
     pub use check::fuzz_future;
 }
+
+pub use rt::yield_now;

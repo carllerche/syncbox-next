@@ -6,6 +6,7 @@ cfg_if! {
                 CausalCell,
                 atomic::{AtomicUsize, AtomicPtr},
             },
+            yield_now,
         };
     } else {
         use CausalCell;
@@ -14,9 +15,15 @@ cfg_if! {
     }
 }
 
+macro_rules! debug {
+    // ($($t:tt)*) => { println!($($t)*) };
+    ($($t:tt)*) => {};
+}
+
 use crossbeam_utils::CachePadded;
 use _futures::Poll;
 
+use std::fmt;
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{self, Acquire, Release, AcqRel, Relaxed};
@@ -66,7 +73,7 @@ struct WaiterNode {
 /// When not full, the rest of the `usize` tracks the total number of messages
 /// in the channel. When full, the rest of the `usize` is a pointer to the tail
 /// of the "waiting senders" queue.
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 struct SemState(usize);
 
 /// Waiter node state
@@ -134,6 +141,8 @@ impl Semaphore {
         // Load the current state
         let mut curr = SemState::load(&self.state, Acquire);
 
+        debug!(" + poll_permit; sem-state = {:?}", curr);
+
         // Tracks a *mut WaiterNode representing an Arc clone.
         //
         // This avoids having to bump the ref count unless required.
@@ -143,6 +152,8 @@ impl Semaphore {
             let mut next = curr;
 
             if !next.acquire_permit(&self.stub) {
+                debug!(" + poll_permit -- no permits");
+
                 debug_assert!(curr.waiter().is_some());
 
                 if maybe_strong.is_none() {
@@ -153,7 +164,10 @@ impl Semaphore {
 
                         waiter.register();
 
+                        debug!(" + poll_permit -- to_queued_waiting");
+
                         if !waiter.to_queued_waiting() {
+                            debug!(" + poll_permit; waiter already queued");
                             // The node is alrady queued, there is no further work
                             // to do.
                             return Ok(NotReady);
@@ -170,11 +184,14 @@ impl Semaphore {
                 next.set_waiter(maybe_strong.unwrap());
             }
 
+            debug!(" + poll_permit -- pre-CAS; next = {:?}", next);
+
             debug_assert_ne!(curr.0, 0);
             debug_assert_ne!(next.0, 0);
 
             match next.compare_exchange(&self.state, curr, AcqRel, Acquire) {
                 Ok(_) => {
+                    debug!(" + poll_permit -- CAS ok");
                     match curr.waiter() {
                         Some(prev_waiter) => {
                             let waiter = maybe_strong.unwrap();
@@ -185,9 +202,12 @@ impl Semaphore {
                                     .next.store(waiter.as_ptr(), Release);
                             }
 
+                            debug!(" + poll_permit -- waiter pushed");
+
                             return Ok(NotReady);
                         }
                         None => {
+                            debug!(" + poll_permit -- permit acquired");
                             if let Some(waiter) = maybe_strong {
                                 // The waiter was cloned, but never got queued.
                                 // Before enterig `inc_num_messages`, the waiter was
@@ -213,9 +233,12 @@ impl Semaphore {
     /// This either increments the number of available permits or notifies a
     /// pending waiter.
     pub fn release_one(&self) {
+        debug!(" + release_one");
+
         let prev = self.rx_lock.fetch_add(1, AcqRel);
 
         if prev != 0 {
+            debug!("+ release_one; locked");
             // Another thread has the lock and will be responsible for notifying
             // pending waiters.
             return;
@@ -244,8 +267,11 @@ impl Semaphore {
                 }
             };
 
+            debug!(" + release_n -- notify");
+
             if waiter.notify() {
                 n -= 1;
+                debug!(" + release_n -- dec");
             }
         }
     }
@@ -256,6 +282,7 @@ impl Semaphore {
     /// there are no more waiters to pop, `rem` is used to set the available
     /// permits.
     fn pop(&self, rem: usize) -> Option<Arc<WaiterNode>> {
+        debug!(" + pop; rem = {}", rem);
         'outer:
         loop {
             unsafe {
@@ -265,6 +292,8 @@ impl Semaphore {
                 let stub = self.stub();
 
                 if head == stub {
+                    debug!(" + pop; head == stub");
+
                     let next = match NonNull::new(next_ptr) {
                         Some(next) => next,
                         None => {
@@ -290,6 +319,8 @@ impl Semaphore {
                             loop {
                                 if curr.has_waiter(&self.stub) {
                                     // Inconsistent
+                                    debug!(" + pop; inconsistent 1");
+                                    yield_now();
                                     continue 'outer;
                                 }
 
@@ -305,6 +336,8 @@ impl Semaphore {
                             }
                         }
                     };
+
+                    debug!(" + pop; got next waiter");
 
                     self.head.with_mut(|head| *head = next);
                     head = next;
@@ -324,6 +357,8 @@ impl Semaphore {
 
                 if tail != head {
                     // Inconsistent
+                    debug!(" + pop; inconsistent 2");
+                    yield_now();
                     continue 'outer;
                 }
 
@@ -338,6 +373,8 @@ impl Semaphore {
                 }
 
                 // Inconsistent state, loop
+                debug!(" + pop; inconsistent 3");
+                yield_now();
             }
         }
     }
@@ -460,10 +497,12 @@ impl WaiterNode {
                 Ok(_) => {
                     match curr {
                         QueuedWaiting => {
+                            debug!(" + notify -- task notified");
                             self.task.notify();
                             return true;
                         }
-                        _ => {
+                        other => {
+                            debug!(" + notify -- not notified; state = {:?}", other);
                             return false;
                         }
                     }
@@ -603,7 +642,9 @@ impl SemState {
 
     /// Load the state from an AtomicUsize.
     fn load(cell: &AtomicUsize, ordering: Ordering) -> SemState {
-        SemState(cell.load(ordering))
+        let value = cell.load(ordering);
+        debug!(" + SemState::load; value = {}", value);
+        SemState(value)
     }
 
     /// Swap the values
@@ -619,14 +660,32 @@ impl SemState {
                         failure: Ordering)
         -> Result<SemState, SemState>
     {
-        cell.compare_exchange(prev.to_usize(), self.to_usize(), success, failure)
-            .map(SemState)
+        let res = cell.compare_exchange(prev.to_usize(), self.to_usize(), success, failure);
+
+        debug!(" + SemState::compare_exchange; prev = {}; next = {}; result = {:?}",
+                 prev.to_usize(), self.to_usize(), res);
+
+        res.map(SemState)
             .map_err(SemState)
     }
 
     /// Converts the state into a `usize` representation.
     fn to_usize(&self) -> usize {
         self.0
+    }
+}
+
+impl fmt::Debug for SemState {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut fmt = fmt.debug_struct("SemState");
+
+        if self.is_waiter() {
+            fmt.field("state", &"<waiter>");
+        } else {
+            fmt.field("permits", &self.available_permits());
+        }
+
+        fmt.finish()
     }
 }
 

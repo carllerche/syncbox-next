@@ -1,5 +1,6 @@
 use rt::vv::{Actor, VersionVec};
 
+use std::collections::VecDeque;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -36,6 +37,11 @@ pub struct Execution {
     /// Sequential consistency causality. All sequentially consistent operations
     /// synchronize with this causality.
     pub seq_cst_causality: VersionVec,
+
+    /// Threads that have been spawned and are pending their first schedule.
+    ///
+    /// The first time a thread is scheduled does not factor into the branching.
+    pub spawned: VecDeque<usize>,
 }
 
 #[derive(Debug)]
@@ -50,7 +56,7 @@ pub struct ThreadState {
     pub causality: VersionVec,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
     /// True if a thread switch, false is an atomic load.
     pub switch: bool,
@@ -85,6 +91,7 @@ impl Execution {
             threads: vec![ThreadState::new(vv)],
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
+            spawned: VecDeque::new(),
         }
     }
 
@@ -95,6 +102,7 @@ impl Execution {
 
         Actor::new(&mut causality, thread_id).inc();
         self.threads.push(ThreadState::new(causality));
+        self.spawned.push_back(thread_id);
 
         ThreadHandle {
             thread_id,
@@ -107,6 +115,10 @@ impl Execution {
     }
 
     pub fn unpark_thread(&mut self, thread_id: usize) {
+        if thread_id == self.active_thread {
+            return;
+        }
+
         // Synchronize memory
         let (active, th) = self.active_thread2_mut(thread_id);
         th.causality.join(&active.causality);
@@ -140,6 +152,7 @@ impl Execution {
         self.id = ExecutionId::new();
         self.branches_pos = 0;
         self.threads.clear();
+        self.spawned.clear();
         self.active_thread = 0;
         self.seq_cst_causality = VersionVec::new();
 
@@ -159,8 +172,30 @@ impl Execution {
         false
     }
 
-    /// Schedule a thread for execution.
     pub fn schedule(&mut self) -> bool {
+        // Threads that are spawned but have not yet executed get scheduled
+        // first. These first executions do not factor in the run permutations.
+        //
+        if let Some(i) = self.spawned.pop_front() {
+            self.active_thread = i;
+            return false;
+        }
+
+        let ret = self.schedule2();
+
+        // Release yielded threads
+        for th in self.threads.iter_mut() {
+            if th.is_yield() {
+                th.set_runnable();
+            }
+        }
+
+        ret
+    }
+
+    /// Schedule a thread for execution.
+    fn schedule2(&mut self) -> bool {
+        // Find where we currently are in the run
         let (start, push) = self.branches.get(self.branches_pos)
             .map(|branch| {
                 assert!(branch.switch);
@@ -169,6 +204,8 @@ impl Execution {
             .unwrap_or((0, true));
 
         debug_assert!(start < self.threads.len());
+
+        let mut yielded = None;
 
         for (mut i, th) in self.threads[start..].iter().enumerate() {
             i += start;
@@ -182,7 +219,7 @@ impl Execution {
 
                 if push {
                     // Max execution depth
-                    assert!(self.branches.len() <= 1_000_000);
+                    assert!(self.branches.len() <= 1_000);
 
                     self.branches.push(Branch {
                         switch: true,
@@ -197,7 +234,26 @@ impl Execution {
                 self.branches_pos += 1;
 
                 return false;
+            } else if th.is_yield() {
+                if yielded.is_none() {
+                    yielded = Some(i);
+                }
             }
+        }
+
+        if let Some(i) = yielded {
+            if push {
+                self.branches.push(Branch {
+                    switch: true,
+                    index: i,
+                    last: true,
+                });
+            }
+
+            self.active_thread = i;
+            self.branches_pos += 1;
+
+            return false;
         }
 
         for th in self.threads.iter() {

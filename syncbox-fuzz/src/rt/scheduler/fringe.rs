@@ -94,13 +94,6 @@ impl Scheduler {
                 return;
             }
 
-            // Release yielded threads
-            for th in execution.threads.iter_mut() {
-                if th.is_yield() {
-                    th.set_runnable();
-                }
-            }
-
             self.tick(execution);
         }
     }
@@ -149,9 +142,6 @@ fn tick(
         threads.push(Thread::new(stack, || {
             th.call();
         }));
-
-        state.execution.active_thread = thread_id;
-        tick(state, threads, stacks);
     }
 }
 

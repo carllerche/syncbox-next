@@ -1,6 +1,7 @@
 #![allow(warnings)]
 
 use rt::{Execution, FnBox};
+use std::collections::VecDeque;
 use std::fmt;
 use std::mem;
 use std::ptr;
@@ -23,13 +24,18 @@ scoped_thread_local! {
 
 #[derive(Debug)]
 struct Shared {
-    execution: Mutex<*mut Execution>,
+    synced: Mutex<Synced>,
     active_thread: AtomicUsize,
     next_thread: AtomicUsize,
     done: AtomicUsize,
     threads: Vec<Mutex<Thread>>,
     condvars: Vec<Condvar>,
     notify: thread::Thread,
+}
+
+#[derive(Debug)]
+struct Synced {
+    execution: *mut Execution,
 }
 
 #[derive(Debug)]
@@ -79,7 +85,9 @@ impl Scheduler {
             .collect();
 
         let shared = Arc::new(Shared {
-            execution: Mutex::new(ptr::null_mut()),
+            synced: Mutex::new(Synced {
+                execution: ptr::null_mut(),
+            }),
             active_thread: AtomicUsize::new(0),
             next_thread: AtomicUsize::new(1),
             done: AtomicUsize::new(0),
@@ -105,8 +113,8 @@ impl Scheduler {
         F: FnOnce(&mut Execution) -> R,
     {
         STATE.with(|state| {
-            let mut execution = state.shared.execution.lock().unwrap();
-            f(unsafe { &mut **execution })
+            let mut synced = state.shared.synced.lock().unwrap();
+            f(unsafe { &mut *synced.execution })
         })
     }
 
@@ -118,14 +126,16 @@ impl Scheduler {
     fn switch2(release_lock: bool) {
         STATE.with(|state| {
             let active_id = {
-                let mut e = state.shared.execution.lock().unwrap();
-                let execution = *e;
+                let mut e = state.shared.synced.lock().unwrap();
+
+                let execution = e.execution;
 
                 unsafe {
                     if (*execution).schedule() {
                         return;
                     }
 
+                    // println!("=== THREAD {} ===", (*execution).active_thread);
                     (*execution).active_thread
                 }
             };
@@ -157,7 +167,7 @@ impl Scheduler {
 
             match mem::replace(&mut *th, Pending(f)) {
                 Idle => {}
-                _ => panic!(),
+                actual => panic!("unexpected state; actual={:?}", actual),
             }
 
             drop(th);
@@ -173,6 +183,8 @@ impl Scheduler {
         self.shared.next_thread.store(1, Relaxed);
         self.shared.done.store(0, Relaxed);
 
+        assert!(!execution.schedule());
+
         // Set the STD context
         super::set_std();
 
@@ -186,7 +198,7 @@ impl Scheduler {
 
         let _r = Reset(&self.shared);
 
-        *self.shared.execution.lock().unwrap() = execution as *mut _;
+        self.shared.synced.lock().unwrap().execution = execution as *mut _;
 
         run_thread(0, &self.shared, f);
 
@@ -194,7 +206,7 @@ impl Scheduler {
             let done = self.shared.done.load(Acquire);
             let spawned = self.shared.next_thread.load(Acquire);
 
-            if done == spawned {
+            if done+1 == spawned {
                 break;
             }
 
@@ -252,6 +264,14 @@ fn run_worker(i: usize, shared: &Arc<Shared>) {
                 s => panic!("unexpected state = {:?}", s),
             }
         }
+
+
+        let prev = shared.done.fetch_add(1, Release);
+        let next_thread = shared.next_thread.load(Acquire);
+
+        if prev + 2 == next_thread {
+            shared.notify.unpark();
+        }
     }
 }
 
@@ -270,13 +290,6 @@ where
         f();
         Scheduler::switch2(true);
     });
-
-    let prev = shared.done.fetch_add(1, Release);
-    let next_thread = shared.next_thread.load(Acquire);
-
-    if prev + 1 == next_thread {
-        shared.notify.unpark();
-    }
 }
 
 unsafe fn transmute_lt<'a, 'b>(state: &'a State<'b>) -> &'a State<'static> {

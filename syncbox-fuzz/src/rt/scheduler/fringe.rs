@@ -7,6 +7,7 @@ use fringe::{
 };
 
 use std::cell::Cell;
+use std::fmt;
 use std::ptr;
 use std::sync::Arc;
 
@@ -71,6 +72,9 @@ impl Scheduler {
         let f = self.f.clone();
         let stack = stack(&mut self.stacks);
 
+        // Set the scheduler kind
+        super::set_fringe();
+
         self.threads.push(Thread::new(stack, move || {
             f();
         }));
@@ -94,6 +98,15 @@ impl Scheduler {
 
     fn tick(&mut self, execution: &mut Execution) {
         tick(execution, &mut self.threads, &mut self.stacks);
+    }
+}
+
+impl fmt::Debug for Scheduler {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Schedule")
+            .field("threads", &self.threads)
+            .field("stacks", &self.stacks)
+            .finish()
     }
 }
 

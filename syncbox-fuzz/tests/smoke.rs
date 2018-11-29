@@ -38,9 +38,11 @@ fn fuzz_valid() {
     syncbox_fuzz::fuzz(|| {
         let inc = Arc::new(Inc::new());
 
-        let ths: Vec<_> = (0..2).map(|_| {
+        let ths: Vec<_> = (0..2).map(|i| {
             let inc = inc.clone();
-            thread::spawn(move || inc.inc())
+            thread::spawn(move || {
+                inc.inc();
+            })
         }).collect();
 
         for th in ths {

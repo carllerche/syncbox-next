@@ -22,8 +22,10 @@ thread_local!(static KIND: Cell<Kind> = Cell::new(Fringe(())));
 impl Scheduler {
     /// Create an execution
     pub fn new(capacity: usize) -> Scheduler {
+        assert!(capacity > 0);
         Scheduler {
-            kind: Fringe(fringe::Scheduler::new(capacity)),
+            // kind: Fringe(fringe::Scheduler::new(capacity)),
+            kind: Std(std::Scheduler::new(capacity)),
         }
     }
 

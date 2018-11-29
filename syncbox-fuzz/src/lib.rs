@@ -2,6 +2,8 @@
 extern crate cfg_if;
 extern crate fringe;
 #[macro_use]
+extern crate scoped_tls;
+#[macro_use]
 extern crate scoped_mut_tls;
 
 macro_rules! if_futures {

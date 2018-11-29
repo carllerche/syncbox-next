@@ -1,4 +1,4 @@
-use rt::Execution;
+use rt::{Execution, FnBox};
 
 use fringe::{
     Generator,
@@ -7,19 +7,18 @@ use fringe::{
 };
 
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::fmt;
 use std::ptr;
-use std::sync::Arc;
 
 pub struct Scheduler {
-    /// Initialize the execution
-    f: Arc<Fn() + Sync + Send>,
-
     /// Threads
     threads: Vec<Thread>,
 
     /// Re-usable stacks
     stacks: Vec<OsStack>,
+
+    queued_spawn: VecDeque<Box<FnBox>>,
 }
 
 #[derive(Debug)]
@@ -28,17 +27,19 @@ struct Thread {
 }
 
 scoped_mut_thread_local! {
-    static CURRENT_EXECUTION: Execution
+    static STATE: State
+}
+
+struct State<'a> {
+    execution: &'a mut Execution,
+    queued_spawn: &'a mut VecDeque<Box<FnBox>>,
 }
 
 thread_local!(static YIELDER: Cell<*const Yielder<(), ()>> = Cell::new(ptr::null()));
 
 impl Scheduler {
     /// Create an execution
-    pub fn new<F>(capacity: usize, f: F) -> Scheduler
-    where
-        F: Fn() + Sync + Send + 'static,
-    {
+    pub fn new(capacity: usize) -> Scheduler {
         // Create the OS stacks
         let stacks = (0..capacity)
             .map(|_| {
@@ -47,9 +48,9 @@ impl Scheduler {
             .collect();
 
         Scheduler {
-            f: Arc::new(f),
             threads: vec![],
             stacks,
+            queued_spawn: VecDeque::new(),
         }
     }
 
@@ -58,7 +59,7 @@ impl Scheduler {
     where
         F: FnOnce(&mut Execution) -> R,
     {
-        CURRENT_EXECUTION.with(|execution| f(execution))
+        STATE.with(|state| f(state.execution))
     }
 
     /// Perform a context switch
@@ -66,10 +67,18 @@ impl Scheduler {
         Thread::suspend();
     }
 
-    pub fn run(&mut self, execution: &mut Execution) {
+    pub fn spawn(f: Box<FnBox>) {
+        STATE.with(|state| {
+            state.queued_spawn.push_back(f);
+        });
+    }
+
+    pub fn run<F>(&mut self, execution: &mut Execution, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
         self.threads.clear();
 
-        let f = self.f.clone();
         let stack = stack(&mut self.stacks);
 
         // Set the scheduler kind
@@ -97,7 +106,12 @@ impl Scheduler {
     }
 
     fn tick(&mut self, execution: &mut Execution) {
-        tick(execution, &mut self.threads, &mut self.stacks);
+        let mut state = State {
+            execution: execution,
+            queued_spawn: &mut self.queued_spawn,
+        };
+
+        tick(&mut state, &mut self.threads, &mut self.stacks);
     }
 }
 
@@ -111,13 +125,13 @@ impl fmt::Debug for Scheduler {
 }
 
 fn tick(
-    execution: &mut Execution,
+    state: &mut State,
     threads: &mut Vec<Thread>,
     stacks: &mut Vec<OsStack>)
 {
-    let active_thread = execution.active_thread;
+    let active_thread = state.execution.active_thread;
 
-    let maybe_stack = CURRENT_EXECUTION.set(execution, || {
+    let maybe_stack = STATE.set(unsafe { transmute_lt(state) }, || {
         threads[active_thread].resume()
     });
 
@@ -125,10 +139,10 @@ fn tick(
         stacks.push(stack);
     }
 
-    while let Some(th) = execution.queued_spawn.pop_front() {
+    while let Some(th) = state.queued_spawn.pop_front() {
         let thread_id = threads.len();
 
-        assert!(execution.threads[thread_id].is_runnable());
+        assert!(state.execution.threads[thread_id].is_runnable());
 
         let stack = stack(stacks);
 
@@ -136,8 +150,8 @@ fn tick(
             th.call();
         }));
 
-        execution.active_thread = thread_id;
-        tick(execution, threads, stacks);
+        state.execution.active_thread = thread_id;
+        tick(state, threads, stacks);
     }
 }
 
@@ -196,4 +210,8 @@ impl Thread {
         let stack = self.generator.take().unwrap().unwrap();
         Some(stack)
     }
+}
+
+unsafe fn transmute_lt<'a, 'b>(state: &'a mut State<'b>) -> &'a mut State<'static> {
+    ::std::mem::transmute(state)
 }

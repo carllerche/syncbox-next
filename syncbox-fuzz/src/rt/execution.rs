@@ -1,7 +1,5 @@
-use rt::FnBox;
 use rt::vv::{Actor, VersionVec};
 
-use std::collections::VecDeque;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -38,9 +36,6 @@ pub struct Execution {
     /// Sequential consistency causality. All sequentially consistent operations
     /// synchronize with this causality.
     pub seq_cst_causality: VersionVec,
-
-    /// Queue of spawned threads that have not yet been added to the execution.
-    pub queued_spawn: VecDeque<Box<FnBox>>,
 }
 
 #[derive(Debug)]
@@ -90,7 +85,6 @@ impl Execution {
             threads: vec![ThreadState::new(vv)],
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
-            queued_spawn: VecDeque::new(),
         }
     }
 
@@ -150,8 +144,6 @@ impl Execution {
         self.seq_cst_causality = VersionVec::new();
 
         self.threads.push(ThreadState::new(VersionVec::root()));
-
-        assert!(self.queued_spawn.is_empty());
 
         while !self.branches.is_empty() {
             let last = self.branches.len() - 1;
@@ -235,7 +227,6 @@ impl fmt::Debug for Execution {
             .field("threads", &self.threads)
             .field("active_thread", &self.active_thread)
             .field("seq_cst_causality", &self.seq_cst_causality)
-            .field("queued_spawn", &"...")
             .finish()
     }
 }

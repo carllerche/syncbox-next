@@ -16,6 +16,8 @@ pub use self::execution::Branch;
 use self::execution::Execution;
 use self::scheduler::Scheduler;
 
+use std::sync::Arc;
+
 const DEFAULT_MAX_THREADS: usize = 4;
 
 pub fn check<F>(f: F)
@@ -23,23 +25,29 @@ where
     F: Fn() + Sync + Send + 'static,
 {
     let mut execution = Execution::new();
-    let mut scheduler = Scheduler::new(DEFAULT_MAX_THREADS, move || {
-        f();
-        thread_done();
-    });
+    let mut scheduler = Scheduler::new(DEFAULT_MAX_THREADS);
 
-    scheduler.run(&mut execution);
+    let f = Arc::new(f);
 
     let mut i = 0;
 
-    while execution.step() {
+    loop {
         i += 1;
 
         if i % 10_000 == 0 {
-            println!("+++++++++ iter {}", i);
+            println!(" ===== iteration {} =====", i);
         }
 
-        scheduler.run(&mut execution);
+        let f = f.clone();
+
+        scheduler.run(&mut execution, move || {
+            f();
+            thread_done();
+        });
+
+        if !execution.step() {
+            return;
+        }
     }
 }
 
@@ -49,11 +57,18 @@ where
 {
     Scheduler::with_execution(|execution| {
         execution.create_thread();
+    });
+    /*
         execution.queued_spawn.push_back(Box::new(move || {
             f();
             thread_done();
         }));
-    })
+     */
+    Scheduler::spawn(Box::new(move || {
+        f();
+        thread_done();
+    }));
+
 }
 
 /// Marks the current thread as blocked

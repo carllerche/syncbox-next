@@ -1,16 +1,18 @@
 mod fringe;
+mod std;
 
-use rt::Execution;
+use rt::{Execution, FnBox};
 use std::cell::Cell;
 
 #[derive(Debug)]
 pub struct Scheduler {
-    kind: Kind<fringe::Scheduler>,
+    kind: Kind<fringe::Scheduler, std::Scheduler>,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum Kind<T = ()> {
+enum Kind<T = (), U = ()> {
     Fringe(T),
+    Std(U),
 }
 
 use self::Kind::*;
@@ -19,12 +21,9 @@ thread_local!(static KIND: Cell<Kind> = Cell::new(Fringe(())));
 
 impl Scheduler {
     /// Create an execution
-    pub fn new<F>(capacity: usize, f: F) -> Scheduler
-    where
-        F: Fn() + Sync + Send + 'static,
-    {
+    pub fn new(capacity: usize) -> Scheduler {
         Scheduler {
-            kind: Fringe(fringe::Scheduler::new(capacity, f)),
+            kind: Fringe(fringe::Scheduler::new(capacity)),
         }
     }
 
@@ -34,6 +33,7 @@ impl Scheduler {
         F: FnOnce(&mut Execution) -> R,
     {
         match KIND.with(|c| c.get()) {
+            Std(_) => std::Scheduler::with_execution(f),
             Fringe(_) => fringe::Scheduler::with_execution(f),
         }
     }
@@ -41,15 +41,31 @@ impl Scheduler {
     /// Perform a context switch
     pub fn switch() {
         match KIND.with(|c| c.get()) {
+            Std(_) => std::Scheduler::switch(),
             Fringe(_) => fringe::Scheduler::switch(),
         }
     }
 
-    pub fn run(&mut self, execution: &mut Execution) {
-        match self.kind {
-            Fringe(ref mut v) => v.run(execution),
+    pub fn spawn(f: Box<FnBox>) {
+        match KIND.with(|c| c.get()) {
+            Std(_) => std::Scheduler::spawn(f),
+            Fringe(_) => fringe::Scheduler::spawn(f),
         }
     }
+
+    pub fn run<F>(&mut self, execution: &mut Execution, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        match self.kind {
+            Std(ref mut v) => v.run(execution, f),
+            Fringe(ref mut v) => v.run(execution, f),
+        }
+    }
+}
+
+fn set_std() {
+    KIND.with(|c| c.set(Std(())))
 }
 
 fn set_fringe() {

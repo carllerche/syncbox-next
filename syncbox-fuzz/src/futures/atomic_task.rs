@@ -1,10 +1,9 @@
-use _futures::task::{self, Task};
-
+use super::task;
 use std::cell::RefCell;
 
 #[derive(Debug)]
 pub struct AtomicTask {
-    task: RefCell<Option<Task>>,
+    task: RefCell<Option<task::Task>>,
 }
 
 impl AtomicTask {
@@ -18,7 +17,7 @@ impl AtomicTask {
         self.register_task(task::current());
     }
 
-    pub fn register_task(&self, task: Task) {
+    pub fn register_task(&self, task: task::Task) {
         *self.task.borrow_mut() = Some(task);
     }
 

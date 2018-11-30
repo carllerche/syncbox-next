@@ -13,63 +13,8 @@ pub use self::vv::{Actor, CausalContext, VersionVec};
 // TODO: Cleanup?
 pub use self::execution::Branch;
 
-use self::execution::Execution;
-use self::scheduler::Scheduler;
-
-use std::sync::Arc;
-
-const DEFAULT_MAX_THREADS: usize = 4;
-
-const FILE: &str = "syncbox-fuzz.txt";
-
-pub fn check<F>(f: F)
-where
-    F: Fn() + Sync + Send + 'static,
-{
-    use std::fs::File;
-    use std::io::prelude::*;
-    use serde_json;
-
-    let mut execution = Execution::new();
-    let mut scheduler = Scheduler::new(DEFAULT_MAX_THREADS);
-
-    if false {
-        let mut file = File::open(FILE).unwrap();
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).unwrap();
-        execution.branches = serde_json::from_str(&contents).unwrap();
-    }
-
-    let f = Arc::new(f);
-
-    let mut i = 0;
-
-    loop {
-        i += 1;
-
-        if i % 10_000 == 0 {
-            println!(" ===== iteration {} =====", i);
-
-            if false {
-                let serialized = serde_json::to_string(&execution.branches).unwrap();
-
-                let mut file = File::create(FILE).unwrap();
-                file.write_all(serialized.as_bytes()).unwrap();
-            }
-        }
-
-        let f = f.clone();
-
-        scheduler.run(&mut execution, move || {
-            f();
-            thread_done();
-        });
-
-        if !execution.step() {
-            return;
-        }
-    }
-}
+pub(crate) use self::execution::Execution;
+pub(crate) use self::scheduler::Scheduler;
 
 pub fn spawn<F>(f: F)
 where
@@ -147,35 +92,35 @@ pub fn seq_cst() {
 }
 
 if_futures! {
-    mod futures;
-
     use _futures::Future;
+    use std::mem::replace;
 
-    pub fn wait_future<F>(f: F)
+    pub fn wait_future<F>(mut f: F)
     where
         F: Future<Item = (), Error = ()>
     {
-        use _futures::executor::spawn;
-        use std::sync::Arc;
-
-        let notify = Arc::new(futures::Notify::new());
-        let mut f = spawn(f);
-
         loop {
-            let res = f.poll_future_notify(&notify, 0).unwrap();
+            let res = f.poll().unwrap();
 
             if res.is_ready() {
                 return;
             }
 
-            if !notify.consume_notify() {
+            let notified = Scheduler::with_execution(|execution| {
+                replace(
+                    &mut execution.active_thread_mut().notified,
+                    false)
+
+            });
+
+            if !notified {
                 park();
             }
         }
     }
 }
 
-fn thread_done() {
+pub fn thread_done() {
     Scheduler::with_execution(|execution| {
         execution.active_thread_mut().set_terminated();
     });

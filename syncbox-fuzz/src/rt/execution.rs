@@ -54,6 +54,9 @@ pub struct ThreadState {
 
     /// Tracks observed causality
     pub causality: VersionVec,
+
+    /// Tracks a future's `Task::notify` flag
+    pub notified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +176,16 @@ impl Execution {
     }
 
     pub fn schedule(&mut self) -> bool {
+        let ret = self.schedule2();
+
+        if false {
+            println!("===== TH {} =====", self.active_thread);
+        }
+
+        ret
+    }
+
+    fn schedule2(&mut self) -> bool {
         // Threads that are spawned but have not yet executed get scheduled
         // first. These first executions do not factor in the run permutations.
         //
@@ -181,7 +194,7 @@ impl Execution {
             return false;
         }
 
-        let ret = self.schedule2();
+        let ret = self.schedule3();
 
         // Release yielded threads
         for th in self.threads.iter_mut() {
@@ -194,7 +207,7 @@ impl Execution {
     }
 
     /// Schedule a thread for execution.
-    fn schedule2(&mut self) -> bool {
+    fn schedule3(&mut self) -> bool {
         // Find where we currently are in the run
         let (start, push) = self.branches.get(self.branches_pos)
             .map(|branch| {
@@ -293,6 +306,7 @@ impl ThreadState {
             run: Run::Runnable,
             critical: false,
             causality,
+            notified: false,
         }
     }
 
@@ -391,6 +405,14 @@ impl ThreadHandle {
 
     pub fn unpark(&self) {
         Scheduler::with_execution(|execution| {
+            execution.unpark_thread(self.thread_id);
+        });
+    }
+
+    #[cfg(feature = "futures")]
+    pub fn future_notify(&self) {
+        Scheduler::with_execution(|execution| {
+            execution.active_thread_mut().notified = true;
             execution.unpark_thread(self.thread_id);
         });
     }

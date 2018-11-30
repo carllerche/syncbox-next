@@ -6,13 +6,14 @@ extern crate syncbox_fuzz;
 use syncbox_fuzz::fuzz_future;
 use syncbox_fuzz::sync::atomic::AtomicUsize;
 use syncbox_fuzz::thread;
+use syncbox_fuzz::futures::task;
 
 use futures::{
     future::{
         lazy,
         poll_fn,
     },
-    task, Async
+    Async
 };
 
 use std::sync::Arc;

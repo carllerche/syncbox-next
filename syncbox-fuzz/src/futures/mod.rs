@@ -11,3 +11,24 @@ where
 {
     rt::spawn(move || rt::wait_future(f));
 }
+
+pub mod task {
+    use rt;
+
+    #[derive(Debug)]
+    pub struct Task {
+        thread: rt::ThreadHandle,
+    }
+
+    pub fn current() -> Task {
+        Task {
+            thread: rt::ThreadHandle::current(),
+        }
+    }
+
+    impl Task {
+        pub fn notify(&self) {
+            self.thread.future_notify();
+        }
+    }
+}

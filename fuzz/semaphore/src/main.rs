@@ -5,22 +5,21 @@ extern crate crossbeam_utils;
 extern crate futures as _futures;
 extern crate syncbox_fuzz;
 
+#[allow(warnings)]
 #[path = "../../../src/futures/semaphore.rs"]
 mod semaphore;
 
 use semaphore::*;
 
 use syncbox_fuzz::{
+    fuzz,
     futures,
-    fuzz_future,
     sync::atomic::AtomicUsize,
-    thread,
 };
 
 use _futures::{
     Async,
     Future,
-    future::poll_fn,
     Poll,
 };
 use std::sync::Arc;
@@ -58,7 +57,10 @@ impl Future for Actor {
 }
 
 fn main() {
-    fuzz_future(|| {
+    let mut fuzz = fuzz::Builder::new();
+    fuzz.checkpoint_file("syncbox-fuzz.txt");
+
+    fuzz.fuzz_future(|| {
         let shared = Arc::new(Shared {
             semaphore: Semaphore::new(NUM),
             active: AtomicUsize::new(0),

@@ -186,7 +186,7 @@ impl Scheduler {
         assert!(!execution.schedule());
 
         // Set the STD context
-        super::set_std();
+        super::set_thread();
 
         struct Reset<'a>(&'a Shared);
 
@@ -223,7 +223,7 @@ impl Drop for Scheduler {
 
 fn spawn_worker(i: usize, shared: Arc<Shared>) {
     thread::spawn(move || {
-        super::set_std();
+        super::set_thread();
 
         run_worker(i, &shared);
     });

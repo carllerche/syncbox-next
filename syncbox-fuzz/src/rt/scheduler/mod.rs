@@ -1,4 +1,4 @@
-mod fringe;
+mod gen;
 mod std;
 
 use rt::{Execution, FnBox};
@@ -6,26 +6,33 @@ use std::cell::Cell;
 
 #[derive(Debug)]
 pub struct Scheduler {
-    kind: Kind<fringe::Scheduler, std::Scheduler>,
+    kind: Kind<gen::Scheduler, std::Scheduler>,
 }
 
 #[derive(Copy, Clone, Debug)]
 enum Kind<T = (), U = ()> {
-    Fringe(T),
-    Std(U),
+    Generator(T),
+    Thread(U),
 }
 
 use self::Kind::*;
 
-thread_local!(static KIND: Cell<Kind> = Cell::new(Fringe(())));
+thread_local!(static KIND: Cell<Kind> = Cell::new(Generator(())));
 
 impl Scheduler {
-    /// Create an execution
-    pub fn new(capacity: usize) -> Scheduler {
+    /// Create a generator based scheduler
+    pub fn new_generator(capacity: usize) -> Scheduler {
         assert!(capacity > 0);
         Scheduler {
-            kind: Fringe(fringe::Scheduler::new(capacity)),
-            // kind: Std(std::Scheduler::new(capacity)),
+            kind: Generator(gen::Scheduler::new(capacity)),
+        }
+    }
+
+    /// Create a thread based scheduler
+    pub fn new_thread(capacity: usize) -> Scheduler {
+        assert!(capacity > 0);
+        Scheduler {
+            kind: Thread(std::Scheduler::new(capacity)),
         }
     }
 
@@ -35,23 +42,23 @@ impl Scheduler {
         F: FnOnce(&mut Execution) -> R,
     {
         match KIND.with(|c| c.get()) {
-            Std(_) => std::Scheduler::with_execution(f),
-            Fringe(_) => fringe::Scheduler::with_execution(f),
+            Thread(_) => std::Scheduler::with_execution(f),
+            Generator(_) => gen::Scheduler::with_execution(f),
         }
     }
 
     /// Perform a context switch
     pub fn switch() {
         match KIND.with(|c| c.get()) {
-            Std(_) => std::Scheduler::switch(),
-            Fringe(_) => fringe::Scheduler::switch(),
+            Thread(_) => std::Scheduler::switch(),
+            Generator(_) => gen::Scheduler::switch(),
         }
     }
 
     pub fn spawn(f: Box<FnBox>) {
         match KIND.with(|c| c.get()) {
-            Std(_) => std::Scheduler::spawn(f),
-            Fringe(_) => fringe::Scheduler::spawn(f),
+            Thread(_) => std::Scheduler::spawn(f),
+            Generator(_) => gen::Scheduler::spawn(f),
         }
     }
 
@@ -60,16 +67,16 @@ impl Scheduler {
         F: FnOnce() + Send + 'static,
     {
         match self.kind {
-            Std(ref mut v) => v.run(execution, f),
-            Fringe(ref mut v) => v.run(execution, f),
+            Thread(ref mut v) => v.run(execution, f),
+            Generator(ref mut v) => v.run(execution, f),
         }
     }
 }
 
-fn set_std() {
-    KIND.with(|c| c.set(Std(())))
+fn set_thread() {
+    KIND.with(|c| c.set(Thread(())))
 }
 
-fn set_fringe() {
-    KIND.with(|c| c.set(Fringe(())))
+fn set_generator() {
+    KIND.with(|c| c.set(Generator(())))
 }

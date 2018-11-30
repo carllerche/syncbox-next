@@ -42,6 +42,9 @@ pub struct Execution {
     ///
     /// The first time a thread is scheduled does not factor into the branching.
     pub spawned: VecDeque<usize>,
+
+    /// Log execution output to STDOUT
+    pub log: bool,
 }
 
 #[derive(Debug)]
@@ -95,6 +98,7 @@ impl Execution {
             active_thread: 0,
             seq_cst_causality: VersionVec::new(),
             spawned: VecDeque::new(),
+            log: false,
         }
     }
 
@@ -178,7 +182,7 @@ impl Execution {
     pub fn schedule(&mut self) -> bool {
         let ret = self.schedule2();
 
-        if false {
+        if self.log {
             println!("===== TH {} =====", self.active_thread);
         }
 

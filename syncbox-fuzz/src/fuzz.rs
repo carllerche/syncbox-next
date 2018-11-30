@@ -21,6 +21,9 @@ pub struct Builder {
 
     /// What runtime to use
     pub runtime: Runtime,
+
+    /// Log execution output to stdout.
+    pub log: bool,
 }
 
 #[derive(Debug)]
@@ -36,6 +39,7 @@ impl Builder {
             checkpoint_file: None,
             checkpoint_interval: 10_000,
             runtime: Runtime::Generator,
+            log: false,
         }
     }
 
@@ -62,6 +66,8 @@ impl Builder {
                 execution.branches = serde_json::from_str(&contents).unwrap();
             }
         }
+
+        execution.log = self.log;
 
         let f = Arc::new(f);
 

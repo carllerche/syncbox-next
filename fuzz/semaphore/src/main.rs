@@ -3,6 +3,7 @@ extern crate cfg_if;
 extern crate crossbeam_utils;
 #[macro_use]
 extern crate futures as _futures;
+#[macro_use]
 extern crate syncbox_fuzz;
 
 #[allow(warnings)]
@@ -58,6 +59,7 @@ impl Future for Actor {
 
 fn main() {
     let mut fuzz = fuzz::Builder::new();
+    fuzz.log = true;
     fuzz.checkpoint_file("syncbox-fuzz.txt");
 
     fuzz.fuzz_future(|| {

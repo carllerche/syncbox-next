@@ -12,12 +12,11 @@ cfg_if! {
         use CausalCell;
         use _futures::task::AtomicTask;
         use std::sync::atomic::{AtomicUsize, AtomicPtr};
-    }
-}
 
-macro_rules! debug {
-    // ($($t:tt)*) => { println!($($t)*) };
-    ($($t:tt)*) => {};
+        macro_rules! debug {
+            ($($t:tt)*) => {};
+        }
+    }
 }
 
 use crossbeam_utils::CachePadded;

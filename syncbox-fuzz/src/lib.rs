@@ -21,6 +21,15 @@ macro_rules! if_futures {
     }
 }
 
+#[macro_export]
+macro_rules! debug {
+    ($($t:tt)*) => {
+        if $crate::__debug_enabled() {
+            println!($($t)*);
+        }
+    };
+}
+
 pub mod fuzz;
 mod rt;
 pub mod sync;
@@ -37,3 +46,8 @@ if_futures! {
 }
 
 pub use rt::yield_now;
+
+#[doc(hidden)]
+pub fn __debug_enabled() -> bool {
+    rt::Scheduler::with_execution(|e| e.log)
+}

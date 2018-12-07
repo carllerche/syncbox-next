@@ -9,8 +9,10 @@ pub struct CausalCell<T> {
 
 impl<T> CausalCell<T> {
     pub fn new(data: T) -> CausalCell<T> {
-        let v = rt::causal_context(|ctx| {
-            ctx.actor().happens_before().clone()
+        let v = rt::execution(|execution| {
+            execution.threads.actor()
+                .happens_before()
+                .clone_with(&mut execution.arena)
         });
 
         CausalCell {
@@ -23,13 +25,13 @@ impl<T> CausalCell<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        rt::causal_context(|ctx| {
+        rt::execution(|execution| {
             let v = self.version.borrow();
 
             assert!(
-                *v <= *ctx.actor().happens_before(),
+                *v <= *execution.threads.actor().happens_before(),
                 "cell={:?}; thread={:?}",
-                *v, *ctx.actor().happens_before());
+                *v, *execution.threads.actor().happens_before());
         });
 
         rt::critical(|| {
@@ -41,15 +43,15 @@ impl<T> CausalCell<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        rt::causal_context(|ctx| {
+        rt::execution(|execution| {
             let mut v = self.version.borrow_mut();
 
             assert!(
-                *v <= *ctx.actor().happens_before(),
+                *v <= *execution.threads.actor().happens_before(),
                 "cell={:?}; thread={:?}",
-                *v, *ctx.actor().happens_before());
+                *v, *execution.threads.actor().happens_before());
 
-            v.join(ctx.actor().happens_before());
+            v.join(execution.threads.actor().happens_before());
         });
 
         rt::critical(|| {

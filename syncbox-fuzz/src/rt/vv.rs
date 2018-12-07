@@ -1,11 +1,12 @@
-use rt::{Branch, Execution};
+use rt::ThreadSet;
+use rt::arena::{self, Arena};
 
 use std::cmp;
 use std::ops;
 
-#[derive(Debug, Clone, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, PartialOrd, Eq, PartialEq)]
 pub struct VersionVec {
-    versions: Vec<usize>,
+    versions: arena::Slice<usize>,
 }
 
 #[derive(Debug)]
@@ -14,31 +15,17 @@ pub struct Actor<'a> {
     id: usize,
 }
 
-/// Current causal context
-#[derive(Debug)]
-pub struct CausalContext<'a> {
-    actor: Actor<'a>,
-    seq_cst_causality: &'a mut VersionVec,
-
-    // TODO: Cleanup
-    pub branches: &'a mut Vec<Branch>,
-    pub branches_pos: &'a mut usize,
-}
-
-static NULL: usize = 0;
-const INIT: usize = 1;
-
 impl VersionVec {
-    pub fn new() -> VersionVec {
+    pub fn new(max_threads: usize, arena: &mut Arena) -> VersionVec {
         VersionVec {
-            versions: vec![],
+            versions: arena.slice(max_threads),
         }
     }
 
     /// Returns a new `VersionVec` that represents the very first event in the execution.
-    pub fn root() -> VersionVec {
-        let mut vv = VersionVec::new();
-        Actor::new(&mut vv, 0).inc();
+    pub fn root(max_threads: usize, arena: &mut Arena) -> VersionVec {
+        let mut vv = VersionVec::new(max_threads, arena);
+        vv[0] += 1;
         vv
     }
 
@@ -54,12 +41,14 @@ impl VersionVec {
     }
 
     pub fn join(&mut self, other: &VersionVec) {
-        if self.versions.len() < other.versions.len() {
-            self.versions.resize(other.versions.len(), INIT);
-        }
-
         for (i, &version) in other.versions.iter().enumerate() {
             self.versions[i] = cmp::max(self.versions[i], version);
+        }
+    }
+
+    pub fn clone_with(&self, arena: &mut arena::Arena) -> Self {
+        VersionVec {
+            versions: self.versions.clone_with(arena),
         }
     }
 }
@@ -68,26 +57,21 @@ impl ops::Index<usize> for VersionVec {
     type Output = usize;
 
     fn index(&self, index: usize) -> &usize {
-        self.versions.get(index)
-            .unwrap_or(&NULL)
+        self.versions.index(index)
     }
 }
 
 impl ops::IndexMut<usize> for VersionVec {
     fn index_mut(&mut self, index: usize) -> &mut usize {
-        if self.versions.len() < index + 1 {
-            self.versions.resize(index + 1, INIT);
-        }
-
-        &mut self.versions[index]
+        self.versions.index_mut(index)
     }
 }
 
 impl<'a> Actor<'a> {
-    pub(super) fn new(vv: &'a mut VersionVec, id: usize) -> Actor<'a> {
+    pub(super) fn new(ctx: &'a mut ThreadSet) -> Actor<'a> {
         Actor {
-            vv,
-            id,
+            vv: &mut ctx.threads[ctx.active].causality,
+            id: ctx.active,
         }
     }
 
@@ -105,38 +89,10 @@ impl<'a> Actor<'a> {
     }
 
     pub fn inc(&mut self) {
-        if self.vv.versions.len() <= self.id {
-            self.vv.versions.resize(self.id + 1, INIT);
-        }
-
         self.vv.versions[self.id] += 1;
-    }
-}
-
-impl<'a> CausalContext<'a> {
-    pub fn new(execution: &'a mut Execution) -> CausalContext<'a> {
-        CausalContext {
-            actor: Actor {
-                vv: &mut execution.threads[execution.active_thread].causality,
-                id: execution.active_thread,
-            },
-            seq_cst_causality: &mut execution.seq_cst_causality,
-            branches: &mut execution.branches,
-            branches_pos: &mut execution.branches_pos,
-        }
     }
 
     pub fn join(&mut self, other: &VersionVec) {
-        self.actor.vv.join(other);
-    }
-
-    pub fn actor(&mut self) -> &mut Actor<'a> {
-        &mut self.actor
-    }
-
-    /// Insert a point of sequential consistency
-    pub fn seq_cst(&mut self) {
-        self.actor.vv.join(self.seq_cst_causality);
-        self.seq_cst_causality.join(self.actor.vv);
+        self.vv.join(other);
     }
 }

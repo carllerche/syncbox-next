@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate cfg_if;
-#[macro_use]
 extern crate generator;
+extern crate libc;
 #[macro_use]
 extern crate scoped_tls;
 #[macro_use]

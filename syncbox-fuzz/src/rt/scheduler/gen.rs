@@ -9,10 +9,12 @@ pub struct Scheduler {
     /// Threads
     threads: Vec<Thread>,
 
+    next_thread: usize,
+
     queued_spawn: VecDeque<Box<FnBox>>,
 }
 
-type Thread = Generator<'static, (), ()>;
+type Thread = Generator<'static, Option<Box<FnBox>>, ()>;
 
 scoped_mut_thread_local! {
     static STATE: State
@@ -27,9 +29,12 @@ const STACK_SIZE: usize = 1 << 23;
 
 impl Scheduler {
     /// Create an execution
-    pub fn new(_capacity: usize) -> Scheduler {
+    pub fn new(capacity: usize) -> Scheduler {
+        let threads = spawn_threads(capacity);
+
         Scheduler {
-            threads: vec![],
+            threads,
+            next_thread: 0,
             queued_spawn: VecDeque::new(),
         }
     }
@@ -57,15 +62,13 @@ impl Scheduler {
     where
         F: FnOnce() + Send + 'static,
     {
-        self.threads.clear();
 
         // Set the scheduler kind
         super::set_generator();
 
-        self.threads.push(Gn::new_opt(STACK_SIZE, move || {
-            f();
-            done!();
-        }));
+        self.next_thread = 1;
+        self.threads[0].set_para(Some(Box::new(f)));
+        self.threads[0].resume();
 
         loop {
             if execution.schedule() {
@@ -83,7 +86,7 @@ impl Scheduler {
             queued_spawn: &mut self.queued_spawn,
         };
 
-        tick(&mut state, &mut self.threads);
+        tick(&mut state, &mut self.threads, &mut self.next_thread);
     }
 }
 
@@ -97,24 +100,40 @@ impl fmt::Debug for Scheduler {
 
 fn tick(
     state: &mut State,
-    threads: &mut Vec<Thread>)
+    threads: &mut Vec<Thread>,
+    next_thread: &mut usize)
 {
-    let active_thread = state.execution.active_thread;
+    let active_thread = state.execution.threads.active;
 
     STATE.set(unsafe { transmute_lt(state) }, || {
         threads[active_thread].resume();
     });
 
     while let Some(th) = state.queued_spawn.pop_front() {
-        let thread_id = threads.len();
+        let thread_id = *next_thread;
+        *next_thread += 1;
 
-        assert!(state.execution.threads[thread_id].is_runnable());
+        assert!(state.execution.threads.threads[thread_id].is_runnable());
 
-        threads.push(Gn::new_opt(STACK_SIZE, move || {
-            th.call();
-            done!();
-        }));
+        threads[thread_id].set_para(Some(th));
+        threads[thread_id].resume();
     }
+}
+
+fn spawn_threads(n: usize) -> Vec<Thread> {
+    (0..n).map(|_| {
+        let mut g = Gn::new_opt(STACK_SIZE, move || {
+            loop {
+                let f: Option<Box<FnBox>> = generator::yield_(()).unwrap();
+                generator::yield_with(());
+                f.unwrap().call();
+            }
+
+            // done!();
+        });
+        g.resume();
+        g
+    }).collect()
 }
 
 unsafe fn transmute_lt<'a, 'b>(state: &'a mut State<'b>) -> &'a mut State<'static> {

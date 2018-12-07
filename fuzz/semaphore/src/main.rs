@@ -59,8 +59,8 @@ impl Future for Actor {
 
 fn main() {
     let mut fuzz = fuzz::Builder::new();
-    fuzz.log = true;
-    fuzz.checkpoint_file("syncbox-fuzz.txt");
+    // fuzz.log = true;
+    // fuzz.checkpoint_file("syncbox-fuzz.txt");
 
     fuzz.fuzz_future(|| {
         let shared = Arc::new(Shared {

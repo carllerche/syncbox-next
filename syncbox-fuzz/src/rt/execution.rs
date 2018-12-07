@@ -1,5 +1,7 @@
 use rt::vv::{Actor, VersionVec};
 
+use rt::arena::Arena;
+
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -28,11 +30,7 @@ pub struct Execution {
     /// set of branches.
     pub branches_pos: usize,
 
-    /// State for each thread
-    pub threads: Vec<ThreadState>,
-
-    /// Currently scheduled thread
-    pub active_thread: usize,
+    pub threads: ThreadSet,
 
     /// Sequential consistency causality. All sequentially consistent operations
     /// synchronize with this causality.
@@ -43,8 +41,24 @@ pub struct Execution {
     /// The first time a thread is scheduled does not factor into the branching.
     pub spawned: VecDeque<usize>,
 
+    /// Arena allocator
+    pub arena: Arena,
+
+    /// Maximum number of concurrent threads
+    pub max_threads: usize,
+
+    pub max_history: usize,
+
     /// Log execution output to STDOUT
     pub log: bool,
+}
+
+#[derive(Debug)]
+pub struct ThreadSet {
+    pub threads: Vec<ThreadState>,
+
+    /// Currently scheduled thread
+    pub active: usize,
 }
 
 #[derive(Debug)]
@@ -87,28 +101,36 @@ impl Execution {
     ///
     /// This is only called at the start of a fuzz run. The same instance is
     /// reused across permutations.
-    pub fn new() -> Execution {
-        let vv = VersionVec::root();
+    pub fn new(max_threads: usize, max_memory: usize) -> Execution {
+        let mut arena = Arena::with_capacity(max_memory);
+        let root_vv = VersionVec::root(max_threads, &mut arena);
+        let seq_cst_causality = VersionVec::new(max_threads, &mut arena);
 
         Execution {
             id: ExecutionId::new(),
             branches: vec![],
             branches_pos: 0,
-            threads: vec![ThreadState::new(vv)],
-            active_thread: 0,
-            seq_cst_causality: VersionVec::new(),
+            threads: ThreadSet {
+                threads: vec![ThreadState::new(root_vv)],
+                active: 0,
+            },
+            seq_cst_causality,
             spawned: VecDeque::new(),
+            arena: Arena::with_capacity(max_memory),
+            max_threads,
+            max_history: 7,
             log: false,
         }
     }
 
     /// Create state to track a new thread
     pub fn create_thread(&mut self) -> ThreadHandle {
-        let mut causality = self.active_thread_mut().causality.clone();
-        let thread_id = self.threads.len();
+        let mut causality = self.threads.active_mut().causality.clone_with(&mut self.arena);
+        let thread_id = self.threads.threads.len();
 
-        Actor::new(&mut causality, thread_id).inc();
-        self.threads.push(ThreadState::new(causality));
+        causality[thread_id] += 1;
+
+        self.threads.threads.push(ThreadState::new(causality));
         self.spawned.push_back(thread_id);
 
         ThreadHandle {
@@ -122,12 +144,12 @@ impl Execution {
     }
 
     pub fn unpark_thread(&mut self, thread_id: usize) {
-        if thread_id == self.active_thread {
+        if thread_id == self.threads.active {
             return;
         }
 
         // Synchronize memory
-        let (active, th) = self.active_thread2_mut(thread_id);
+        let (active, th) = self.threads.active2_mut(thread_id);
         th.causality.join(&active.causality);
 
         if th.is_blocked() || th.is_yield() {
@@ -135,55 +157,62 @@ impl Execution {
         }
     }
 
-    pub fn active_thread_mut(&mut self) -> &mut ThreadState {
-        &mut self.threads[self.active_thread]
-    }
-
-    /// Get the active thread and second thread
-    pub fn active_thread2_mut(&mut self, other: usize)
-        -> (&mut ThreadState, &mut ThreadState)
-    {
-        if other >= self.active_thread {
-            let (l, r) = self.threads.split_at_mut(other);
-
-            (&mut l[self.active_thread], &mut r[0])
-        } else {
-            let (l, r) = self.threads.split_at_mut(self.active_thread);
-
-            (&mut r[0], &mut l[other])
-        }
-    }
-
     /// Resets the execution state for the next execution run
-    pub fn step(&mut self) -> bool {
-        self.id = ExecutionId::new();
-        self.branches_pos = 0;
-        self.threads.clear();
-        self.spawned.clear();
-        self.active_thread = 0;
-        self.seq_cst_causality = VersionVec::new();
+    pub fn step(self) -> Option<Self> {
+        let max_threads = self.max_threads;
+        let max_history = self.max_history;
+        let log = self.log;
+        let mut arena = self.arena;
+        let mut branches = self.branches;
+        let mut spawned = self.spawned;
 
-        self.threads.push(ThreadState::new(VersionVec::root()));
+        let mut threads = self.threads;
+        threads.threads.clear();
+        threads.active = 0;
 
-        while !self.branches.is_empty() {
-            let last = self.branches.len() - 1;
+        spawned.clear();
 
-            if !self.branches[last].last {
-                self.branches[last].index += 1;
-                return true;
+        // Force dropping the rest of the fields here
+        drop(self.seq_cst_causality);
+
+        arena.clear();
+
+        while !branches.is_empty() {
+            let last = branches.len() - 1;
+
+            if !branches[last].last {
+                branches[last].index += 1;
+
+                let root_vv = VersionVec::root(max_threads, &mut arena);
+                threads.threads.push(ThreadState::new(root_vv));
+
+                let seq_cst_causality = VersionVec::new(max_threads, &mut arena);
+
+                return Some(Execution {
+                    arena,
+                    branches,
+                    branches_pos: 0,
+                    id: ExecutionId::new(),
+                    threads,
+                    seq_cst_causality,
+                    spawned,
+                    max_threads,
+                    max_history,
+                    log,
+                });
             }
 
-            self.branches.pop();
+            branches.pop();
         }
 
-        false
+        None
     }
 
     pub fn schedule(&mut self) -> bool {
         let ret = self.schedule2();
 
         if self.log {
-            println!("===== TH {} =====", self.active_thread);
+            println!("===== TH {} =====", self.threads.active);
         }
 
         ret
@@ -194,14 +223,14 @@ impl Execution {
         // first. These first executions do not factor in the run permutations.
         //
         if let Some(i) = self.spawned.pop_front() {
-            self.active_thread = i;
+            self.threads.active = i;
             return false;
         }
 
         let ret = self.schedule3();
 
         // Release yielded threads
-        for th in self.threads.iter_mut() {
+        for th in self.threads.threads.iter_mut() {
             if th.is_yield() {
                 th.set_runnable();
             }
@@ -220,16 +249,16 @@ impl Execution {
             })
             .unwrap_or((0, true));
 
-        debug_assert!(start < self.threads.len());
+        debug_assert!(start < self.threads.threads.len());
 
         let mut yielded = None;
 
-        for (mut i, th) in self.threads[start..].iter().enumerate() {
+        for (mut i, th) in self.threads.threads[start..].iter().enumerate() {
             i += start;
 
             if th.is_runnable() {
                 // TODO: Maybe this shouldn't be computed every time.
-                let last = self.threads[i+1..].iter()
+                let last = self.threads.threads[i+1..].iter()
                     .filter(|th| th.is_runnable())
                     .next()
                     .is_none();
@@ -247,7 +276,7 @@ impl Execution {
                     self.branches[self.branches_pos].last = last;
                 }
 
-                self.active_thread = i;
+                self.threads.active = i;
                 self.branches_pos += 1;
 
                 return false;
@@ -267,13 +296,13 @@ impl Execution {
                 });
             }
 
-            self.active_thread = i;
+            self.threads.active = i;
             self.branches_pos += 1;
 
             return false;
         }
 
-        for th in self.threads.iter() {
+        for th in self.threads.threads.iter() {
             if !th.is_terminated() {
                 panic!("deadlock; threads={:?}", self.threads);
             }
@@ -283,11 +312,17 @@ impl Execution {
     }
 
     pub fn set_critical(&mut self) {
-        self.active_thread_mut().critical = true;
+        self.threads.active_mut().critical = true;
     }
 
     pub fn unset_critical(&mut self) {
-        self.active_thread_mut().critical = false;
+        self.threads.active_mut().critical = false;
+    }
+
+    /// Insert a point of sequential consistency
+    pub fn seq_cst(&mut self) {
+        self.threads.actor().join(&self.seq_cst_causality);
+        self.seq_cst_causality.join(self.threads.actor().happens_before());
     }
 }
 
@@ -297,10 +332,35 @@ impl fmt::Debug for Execution {
             .field("id", &self.id)
             .field("branches", &self.branches)
             .field("branches_pos", &self.branches_pos)
-            .field("threads", &self.threads)
-            .field("active_thread", &self.active_thread)
+            .field("threads", &self.threads.threads)
+            .field("active_thread", &self.threads.active)
             .field("seq_cst_causality", &self.seq_cst_causality)
             .finish()
+    }
+}
+
+impl ThreadSet {
+    pub fn active_mut(&mut self) -> &mut ThreadState {
+        &mut self.threads[self.active]
+    }
+
+    /// Get the active thread and second thread
+    pub fn active2_mut(&mut self, other: usize)
+        -> (&mut ThreadState, &mut ThreadState)
+    {
+        if other >= self.active {
+            let (l, r) = self.threads.split_at_mut(other);
+
+            (&mut l[self.active], &mut r[0])
+        } else {
+            let (l, r) = self.threads.split_at_mut(self.active);
+
+            (&mut r[0], &mut l[other])
+        }
+    }
+
+    pub fn actor(&mut self) -> Actor {
+        Actor::new(self)
     }
 }
 
@@ -402,7 +462,7 @@ impl ThreadHandle {
         Scheduler::with_execution(|execution| {
             ThreadHandle {
                 execution: execution.id().clone(),
-                thread_id: execution.active_thread,
+                thread_id: execution.threads.active,
             }
         })
     }
@@ -416,7 +476,7 @@ impl ThreadHandle {
     #[cfg(feature = "futures")]
     pub fn future_notify(&self) {
         Scheduler::with_execution(|execution| {
-            execution.active_thread_mut().notified = true;
+            execution.threads.active_mut().notified = true;
             execution.unpark_thread(self.thread_id);
         });
     }

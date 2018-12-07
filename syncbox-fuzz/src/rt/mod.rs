@@ -1,3 +1,4 @@
+pub mod arena;
 mod execution;
 mod fn_box;
 pub mod oneshot;
@@ -6,9 +7,9 @@ mod synchronize;
 mod vv;
 
 use self::fn_box::FnBox;
-pub use self::synchronize::Synchronize;
-pub use self::execution::{ThreadHandle};
-pub use self::vv::{Actor, CausalContext, VersionVec};
+pub(crate) use self::synchronize::Synchronize;
+pub(crate) use self::execution::{ThreadHandle, ThreadSet};
+pub(crate) use self::vv::{Actor, VersionVec};
 
 // TODO: Cleanup?
 pub use self::execution::Branch;
@@ -34,7 +35,7 @@ where
 /// Marks the current thread as blocked
 pub fn park() {
     Scheduler::with_execution(|execution| {
-        execution.active_thread_mut().set_blocked();
+        execution.threads.active_mut().set_blocked();
     });
 
     Scheduler::switch();
@@ -47,7 +48,7 @@ pub fn branch() {
 
 pub fn yield_now() {
     Scheduler::with_execution(|execution| {
-        execution.active_thread_mut().set_yield();
+        execution.threads.active_mut().set_yield();
     });
 
     Scheduler::switch();
@@ -77,18 +78,18 @@ where
     f()
 }
 
-pub fn causal_context<F, R>(f: F) -> R
+pub(crate) fn execution<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut CausalContext) -> R
+    F: FnOnce(&mut Execution) -> R
 {
-    Scheduler::with_execution(|execution| {
-        f(&mut CausalContext::new(execution))
-    })
+    Scheduler::with_execution(f)
 }
 
 pub fn seq_cst() {
     branch();
-    causal_context(|ctx| ctx.seq_cst());
+    Scheduler::with_execution(|execution| {
+        execution.seq_cst();
+    });
 }
 
 if_futures! {
@@ -108,7 +109,7 @@ if_futures! {
 
             let notified = Scheduler::with_execution(|execution| {
                 replace(
-                    &mut execution.active_thread_mut().notified,
+                    &mut execution.threads.active_mut().notified,
                     false)
 
             });
@@ -122,6 +123,6 @@ if_futures! {
 
 pub fn thread_done() {
     Scheduler::with_execution(|execution| {
-        execution.active_thread_mut().set_terminated();
+        execution.threads.active_mut().set_terminated();
     });
 }

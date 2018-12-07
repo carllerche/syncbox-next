@@ -8,9 +8,15 @@ use std::sync::Arc;
 
 const DEFAULT_MAX_THREADS: usize = 4;
 
+const DEFAULT_MAX_MEMORY: usize = 4096 << 14;
+
 #[derive(Debug)]
 pub struct Builder {
+    /// Max number of threads to check as part of the execution. This should be set as low as possible.
     pub max_threads: usize,
+
+    /// Maximum amount of memory that can be consumed by the associated metadata.
+    pub max_memory: usize,
 
     /// When doing an exhaustive fuzz, uses the file to store and load the fuzz
     /// progress
@@ -36,6 +42,7 @@ impl Builder {
     pub fn new() -> Builder {
         Builder {
             max_threads: DEFAULT_MAX_THREADS,
+            max_memory: DEFAULT_MAX_MEMORY,
             checkpoint_file: None,
             checkpoint_interval: 10_000,
             runtime: Runtime::Generator,
@@ -52,7 +59,7 @@ impl Builder {
     where
         F: Fn() + Sync + Send + 'static,
     {
-        let mut execution = Execution::new();
+        let mut execution = Execution::new(self.max_threads, self.max_memory);
         let mut scheduler = match self.runtime {
             Runtime::Thread => Scheduler::new_thread(self.max_threads),
             Runtime::Generator => Scheduler::new_generator(self.max_threads),
@@ -94,7 +101,9 @@ impl Builder {
                 rt::thread_done();
             });
 
-            if !execution.step() {
+            if let Some(next) = execution.step() {
+                execution = next;
+            } else {
                 return;
             }
         }

@@ -1,4 +1,4 @@
-use rt::{self, Actor, CausalContext, Synchronize};
+use rt::{self, Actor, Execution, Synchronize};
 
 use std::cell::RefCell;
 use std::sync::atomic::Ordering;
@@ -32,11 +32,11 @@ where
     T: Copy + PartialEq,
 {
     pub fn new(value: T) -> Atomic<T> {
-        rt::causal_context(|ctx| {
+        rt::execution(|execution| {
             let writes = vec![Write {
                 value,
-                sync: Synchronize::new(),
-                first_seen: FirstSeen::new(ctx),
+                sync: Synchronize::new(execution.max_threads, &mut execution.arena),
+                first_seen: FirstSeen::new(execution),
                 seq_cst: false,
             }];
 
@@ -50,11 +50,11 @@ where
         rt::branch();
         let mut writes = self.writes.borrow_mut();
 
-        synchronize(|ctx| {
+        synchronize(|execution| {
             // Pick a write that satisfies causality and specified ordering.
-            let write = pick_write(&mut writes[..], ctx, order);
-            write.first_seen.touch(ctx.actor());
-            write.sync.sync_read(ctx, order);
+            let write = pick_write(&mut writes[..], execution, order);
+            write.first_seen.touch(&execution.threads.actor());
+            write.sync.sync_read(execution, order);
             write.value
         })
     }
@@ -63,8 +63,8 @@ where
         rt::branch();
         let mut writes = self.writes.borrow_mut();
 
-        synchronize(|ctx| {
-            do_write(val, &mut *writes, ctx, order);
+        synchronize(|execution| {
+            do_write(val, &mut *writes, execution, order);
         });
     }
 
@@ -78,15 +78,15 @@ where
         rt::branch();
         let mut writes = self.writes.borrow_mut();
 
-        synchronize(|ctx| {
+        synchronize(|execution| {
             let old = {
                 let write = writes.last_mut().unwrap();
-                write.first_seen.touch(ctx.actor());
-                write.sync.sync_read(ctx, order);
+                write.first_seen.touch(&execution.threads.actor());
+                write.sync.sync_read(execution, order);
                 write.value
             };
 
-            do_write(f(old), &mut *writes, ctx, order);
+            do_write(f(old), &mut *writes, execution, order);
             old
         })
     }
@@ -121,20 +121,20 @@ where
         rt::branch();
         let mut writes = self.writes.borrow_mut();
 
-        synchronize(|ctx| {
+        synchronize(|execution| {
             {
                 let write = writes.last_mut().unwrap();
-                write.first_seen.touch(ctx.actor());
+                write.first_seen.touch(&execution.threads.actor());
 
                 if write.value != current {
-                    write.sync.sync_read(ctx, failure);
+                    write.sync.sync_read(execution, failure);
                     return Err(write.value);
                 }
 
-                write.sync.sync_read(ctx, success);
+                write.sync.sync_read(execution, success);
             }
 
-            do_write(new, &mut *writes, ctx, success);
+            do_write(new, &mut *writes, execution, success);
             Ok(current)
         })
     }
@@ -142,14 +142,14 @@ where
 
 fn pick_write<'a, T>(
     writes: &'a mut [Write<T>],
-    ctx: &mut CausalContext,
+    execution: &mut Execution,
     order: Ordering,
 ) -> &'a mut Write<T>
 {
     let seq_cst = is_seq_cst(order);
-    let lower_bound = newest_in_causality(writes, ctx, seq_cst);
+    let lower_bound = newest_in_causality(writes, execution, seq_cst);
 
-    let (offset, push) = ctx.branches.get(*ctx.branches_pos)
+    let (offset, push) = execution.branches.get(execution.branches_pos)
         .map(|branch| {
             assert!(!branch.switch);
             (branch.index, false)
@@ -159,16 +159,16 @@ fn pick_write<'a, T>(
     let last = writes.len() - 1 == lower_bound + offset;
 
     if push {
-        ctx.branches.push(rt::Branch {
+        execution.branches.push(rt::Branch {
             switch: false,
             index: offset,
             last,
         });
     } else {
-        ctx.branches[*ctx.branches_pos].last = last;
+        execution.branches[execution.branches_pos].last = last;
     }
 
-    *ctx.branches_pos += 1;
+    execution.branches_pos += 1;
 
     &mut writes[lower_bound + offset]
 }
@@ -176,17 +176,17 @@ fn pick_write<'a, T>(
 fn do_write<T>(
     value: T,
     writes: &mut Vec<Write<T>>,
-    ctx: &mut CausalContext,
+    execution: &mut Execution,
     order: Ordering)
 {
     let mut write = Write {
         value,
-        sync: writes.last().unwrap().sync.clone(),
-        first_seen: FirstSeen::new(ctx),
+        sync: writes.last().unwrap().sync.clone_with(&mut execution.arena),
+        first_seen: FirstSeen::new(execution),
         seq_cst: is_seq_cst(order),
     };
 
-    write.sync.sync_write(ctx, order);
+    write.sync.sync_write(execution, order);
     writes.push(write);
 }
 
@@ -195,7 +195,7 @@ fn do_write<T>(
 /// The atomic load may not return an older write.
 fn newest_in_causality<T>(
     writes: &[Write<T>],
-    ctx: &mut CausalContext,
+    execution: &mut Execution,
     seq_cst: bool,
 ) -> usize
 {
@@ -204,7 +204,7 @@ fn newest_in_causality<T>(
             return i;
         }
 
-        if write.first_seen.is_seen_by(ctx.actor()) {
+        if write.first_seen.is_seen_by(&execution.threads.actor()) {
             return i;
         }
     }
@@ -214,11 +214,11 @@ fn newest_in_causality<T>(
 
 fn synchronize<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut CausalContext) -> R
+    F: FnOnce(&mut Execution) -> R
 {
-    rt::causal_context(|ctx| {
-        let ret = f(ctx);
-        ctx.actor().inc();
+    rt::execution(|execution| {
+        let ret = f(execution);
+        execution.threads.actor().inc();
         ret
     })
 }
@@ -231,9 +231,9 @@ fn is_seq_cst(order: Ordering) -> bool {
 }
 
 impl FirstSeen {
-    fn new(ctx: &mut CausalContext) -> FirstSeen {
+    fn new(execution: &mut Execution) -> FirstSeen {
         let mut first_seen = FirstSeen(vec![]);
-        first_seen.touch(ctx.actor());
+        first_seen.touch(&execution.threads.actor());
 
         first_seen
     }

@@ -136,7 +136,7 @@ impl Scheduler {
                     }
 
                     // println!("=== THREAD {} ===", (*execution).active_thread);
-                    (*execution).active_thread
+                    (*execution).threads.active
                 }
             };
 

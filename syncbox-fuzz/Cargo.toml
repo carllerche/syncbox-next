@@ -10,6 +10,9 @@ libc = "0.2.44"
 scoped-tls = "0.1.2"
 scoped-mut-tls = { version = "0.1.0", git = "http://github.com/carllerche/scoped-mut-tls" }
 
+# Optional fringe support
+fringe = { optional = true, git = "https://github.com/carllerche/libfringe", branch = "track-nightly" }
+
 # Optional futures support
 futures = { version = "", optional = true }
 

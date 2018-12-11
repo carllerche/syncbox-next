@@ -11,6 +11,9 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 
+#[cfg(feature = "fringe")]
+extern crate fringe;
+
 macro_rules! if_futures {
     ($($t:tt)*) => {
         cfg_if! {
@@ -34,6 +37,7 @@ pub mod fuzz;
 mod rt;
 pub mod sync;
 pub mod thread;
+mod util;
 
 pub use fuzz::fuzz;
 

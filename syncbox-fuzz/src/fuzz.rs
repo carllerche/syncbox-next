@@ -36,6 +36,7 @@ pub struct Builder {
 pub enum Runtime {
     Thread,
     Generator,
+    Fringe,
 }
 
 impl Builder {
@@ -44,7 +45,8 @@ impl Builder {
             max_threads: DEFAULT_MAX_THREADS,
             max_memory: DEFAULT_MAX_MEMORY,
             checkpoint_file: None,
-            checkpoint_interval: 10_000,
+            checkpoint_interval: 100_000,
+            // runtime: Runtime::Fringe,
             runtime: Runtime::Generator,
             log: false,
         }
@@ -63,6 +65,7 @@ impl Builder {
         let mut scheduler = match self.runtime {
             Runtime::Thread => Scheduler::new_thread(self.max_threads),
             Runtime::Generator => Scheduler::new_generator(self.max_threads),
+            Runtime::Fringe => Scheduler::new_fringe(self.max_threads),
         };
 
         if let Some(ref path) = self.checkpoint_file {
@@ -70,7 +73,7 @@ impl Builder {
                 let mut file = File::open(path).unwrap();
                 let mut contents = String::new();
                 file.read_to_string(&mut contents).unwrap();
-                execution.branches = serde_json::from_str(&contents).unwrap();
+                execution.path = serde_json::from_str(&contents).unwrap();
             }
         }
 
@@ -87,7 +90,7 @@ impl Builder {
                 println!(" ===== iteration {} =====", i);
 
                 if let Some(ref path) = self.checkpoint_file {
-                    let serialized = serde_json::to_string(&execution.branches).unwrap();
+                    let serialized = serde_json::to_string(&execution.path).unwrap();
 
                     let mut file = File::create(path).unwrap();
                     file.write_all(serialized.as_bytes()).unwrap();

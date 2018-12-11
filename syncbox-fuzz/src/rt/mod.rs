@@ -2,6 +2,7 @@ pub mod arena;
 mod execution;
 mod fn_box;
 pub mod oneshot;
+mod path;
 mod scheduler;
 mod synchronize;
 mod vv;
@@ -9,10 +10,8 @@ mod vv;
 use self::fn_box::FnBox;
 pub(crate) use self::synchronize::Synchronize;
 pub(crate) use self::execution::{ThreadHandle, ThreadSet};
+pub(crate) use self::path::Path;
 pub(crate) use self::vv::{Actor, VersionVec};
-
-// TODO: Cleanup?
-pub use self::execution::Branch;
 
 pub(crate) use self::execution::Execution;
 pub(crate) use self::scheduler::Scheduler;

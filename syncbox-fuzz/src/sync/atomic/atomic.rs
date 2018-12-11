@@ -146,31 +146,27 @@ fn pick_write<'a, T>(
     order: Ordering,
 ) -> &'a mut Write<T>
 {
-    let seq_cst = is_seq_cst(order);
-    let lower_bound = newest_in_causality(writes, execution, seq_cst);
+    let mut in_causality = false;
+    let threads = &mut execution.threads;
 
-    let (offset, push) = execution.branches.get(execution.branches_pos)
-        .map(|branch| {
-            assert!(!branch.switch);
-            (branch.index, false)
-        })
-        .unwrap_or((0, true));
+    let next = execution.path.branch_write({
+        writes.iter()
+            .enumerate()
+            .rev()
+            // Explore all writes that are not within the actor's causality as
+            // well as the latest one.
+            .take_while(|&(_, ref write)| {
+                let ret = in_causality;
 
-    let last = writes.len() - 1 == lower_bound + offset;
+                in_causality |= is_seq_cst(order) && write.seq_cst;
+                in_causality |= write.first_seen.is_seen_by(&threads.actor());
 
-    if push {
-        execution.branches.push(rt::Branch {
-            switch: false,
-            index: offset,
-            last,
-        });
-    } else {
-        execution.branches[execution.branches_pos].last = last;
-    }
+                !ret
+            })
+            .map(|(i, _)| i)
+    });
 
-    execution.branches_pos += 1;
-
-    &mut writes[lower_bound + offset]
+    &mut writes[next]
 }
 
 fn do_write<T>(
@@ -188,28 +184,6 @@ fn do_write<T>(
 
     write.sync.sync_write(execution, order);
     writes.push(write);
-}
-
-/// Find the newest write that is contained in the current actor's causality.
-///
-/// The atomic load may not return an older write.
-fn newest_in_causality<T>(
-    writes: &[Write<T>],
-    execution: &mut Execution,
-    seq_cst: bool,
-) -> usize
-{
-    for (i, write) in writes.iter().enumerate().rev() {
-        if seq_cst && write.seq_cst {
-            return i;
-        }
-
-        if write.first_seen.is_seen_by(&execution.threads.actor()) {
-            return i;
-        }
-    }
-
-    0
 }
 
 fn synchronize<F, R>(f: F) -> R

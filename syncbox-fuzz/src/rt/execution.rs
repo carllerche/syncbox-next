@@ -1,6 +1,6 @@
-use rt::vv::{Actor, VersionVec};
-
+use rt::Path;
 use rt::arena::Arena;
+use rt::vv::{Actor, VersionVec};
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -18,17 +18,8 @@ pub struct Execution {
     /// Execution identifier
     pub id: ExecutionId,
 
-    /// Path taken
-    pub branches: Vec<Branch>,
-
-    /// Current execution's position in the branch index.
-    ///
-    /// When the execution starts, this is zero, but `branches` might not be
-    /// empty.
-    ///
-    /// In order to perform an exhaustive search, the execution is seeded with a
-    /// set of branches.
-    pub branches_pos: usize,
+    /// Execution path taken
+    pub path: Path,
 
     pub threads: ThreadSet,
 
@@ -76,18 +67,6 @@ pub struct ThreadState {
     pub notified: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Branch {
-    /// True if a thread switch, false is an atomic load.
-    pub switch: bool,
-
-    /// Choice index
-    pub index: usize,
-
-    /// True if `index` is the final choice
-    pub last: bool,
-}
-
 #[derive(Debug)]
 enum Run {
     Runnable,
@@ -108,8 +87,7 @@ impl Execution {
 
         Execution {
             id: ExecutionId::new(),
-            branches: vec![],
-            branches_pos: 0,
+            path: Path::new(),
             threads: ThreadSet {
                 threads: vec![ThreadState::new(root_vv)],
                 active: 0,
@@ -163,7 +141,7 @@ impl Execution {
         let max_history = self.max_history;
         let log = self.log;
         let mut arena = self.arena;
-        let mut branches = self.branches;
+        let mut path = self.path;
         let mut spawned = self.spawned;
 
         let mut threads = self.threads;
@@ -177,35 +155,26 @@ impl Execution {
 
         arena.clear();
 
-        while !branches.is_empty() {
-            let last = branches.len() - 1;
-
-            if !branches[last].last {
-                branches[last].index += 1;
-
-                let root_vv = VersionVec::root(max_threads, &mut arena);
-                threads.threads.push(ThreadState::new(root_vv));
-
-                let seq_cst_causality = VersionVec::new(max_threads, &mut arena);
-
-                return Some(Execution {
-                    arena,
-                    branches,
-                    branches_pos: 0,
-                    id: ExecutionId::new(),
-                    threads,
-                    seq_cst_causality,
-                    spawned,
-                    max_threads,
-                    max_history,
-                    log,
-                });
-            }
-
-            branches.pop();
+        if !path.step() {
+            return None;
         }
 
-        None
+        let root_vv = VersionVec::root(max_threads, &mut arena);
+        threads.threads.push(ThreadState::new(root_vv));
+
+        let seq_cst_causality = VersionVec::new(max_threads, &mut arena);
+
+        Some(Execution {
+            id: ExecutionId::new(),
+            path,
+            threads,
+            seq_cst_causality,
+            spawned,
+            arena,
+            max_threads,
+            max_history,
+            log,
+        })
     }
 
     pub fn schedule(&mut self) -> bool {
@@ -239,76 +208,28 @@ impl Execution {
         ret
     }
 
-    /// Schedule a thread for execution.
+    /// Called by `schedule2`
     fn schedule3(&mut self) -> bool {
-        // Find where we currently are in the run
-        let (start, push) = self.branches.get(self.branches_pos)
-            .map(|branch| {
-                assert!(branch.switch);
-                (branch.index, false)
-            })
-            .unwrap_or((0, true));
+        use rt::path::Thread;
 
-        debug_assert!(start < self.threads.threads.len());
-
-        let mut yielded = None;
-
-        for (mut i, th) in self.threads.threads[start..].iter().enumerate() {
-            i += start;
-
-            if th.is_runnable() {
-                // TODO: Maybe this shouldn't be computed every time.
-                let last = self.threads.threads[i+1..].iter()
-                    .filter(|th| th.is_runnable())
-                    .next()
-                    .is_none();
-
-                if push {
-                    // Max execution depth
-                    assert!(self.branches.len() <= 1_000);
-
-                    self.branches.push(Branch {
-                        switch: true,
-                        index: i,
-                        last,
-                    });
+        let next = self.path.branch_thread({
+            self.threads.threads.iter().map(|th| {
+                if th.is_runnable() {
+                    Thread::Pending
+                } else if th.is_terminated() {
+                    Thread::Terminated
                 } else {
-                    self.branches[self.branches_pos].last = last;
+                    Thread::Skip
                 }
+            })
+        });
 
-                self.threads.active = i;
-                self.branches_pos += 1;
-
-                return false;
-            } else if th.is_yield() {
-                if yielded.is_none() {
-                    yielded = Some(i);
-                }
-            }
+        if let Some(th) = next {
+            self.threads.active = th;
+            false
+        } else {
+            true
         }
-
-        if let Some(i) = yielded {
-            if push {
-                self.branches.push(Branch {
-                    switch: true,
-                    index: i,
-                    last: true,
-                });
-            }
-
-            self.threads.active = i;
-            self.branches_pos += 1;
-
-            return false;
-        }
-
-        for th in self.threads.threads.iter() {
-            if !th.is_terminated() {
-                panic!("deadlock; threads={:?}", self.threads);
-            }
-        }
-
-        true
     }
 
     pub fn set_critical(&mut self) {
@@ -330,8 +251,7 @@ impl fmt::Debug for Execution {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Execution")
             .field("id", &self.id)
-            .field("branches", &self.branches)
-            .field("branches_pos", &self.branches_pos)
+            .field("path", &self.path)
             .field("threads", &self.threads.threads)
             .field("active_thread", &self.threads.active)
             .field("seq_cst_causality", &self.seq_cst_causality)

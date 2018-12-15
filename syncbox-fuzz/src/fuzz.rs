@@ -36,6 +36,7 @@ pub struct Builder {
 pub enum Runtime {
     Thread,
     Generator,
+    #[cfg(feature = "fringe")]
     Fringe,
 }
 
@@ -46,8 +47,13 @@ impl Builder {
             max_memory: DEFAULT_MAX_MEMORY,
             checkpoint_file: None,
             checkpoint_interval: 100_000,
-            // runtime: Runtime::Fringe,
+
+            #[cfg(feature = "fringe")]
+            runtime: Runtime::Fringe,
+
+            #[cfg(not(feature = "fringe"))]
             runtime: Runtime::Generator,
+
             log: false,
         }
     }
@@ -65,6 +71,7 @@ impl Builder {
         let mut scheduler = match self.runtime {
             Runtime::Thread => Scheduler::new_thread(self.max_threads),
             Runtime::Generator => Scheduler::new_generator(self.max_threads),
+            #[cfg(feature = "fringe")]
             Runtime::Fringe => Scheduler::new_fringe(self.max_threads),
         };
 

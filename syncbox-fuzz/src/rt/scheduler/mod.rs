@@ -11,10 +11,6 @@ mod fringe {
     pub struct Scheduler;
 
     impl Scheduler {
-        pub fn new(_: usize) -> Scheduler {
-            unimplemented!();
-        }
-
         /// Access the execution
         pub fn with_execution<F, R>(_: F) -> R
         where
@@ -52,6 +48,7 @@ pub struct Scheduler {
 enum Kind<T = (), U = (), V = ()> {
     Generator(T),
     Thread(U),
+    #[allow(dead_code)]
     Fringe(V),
 }
 
@@ -76,6 +73,7 @@ impl Scheduler {
         }
     }
 
+    #[cfg(feature = "fringe")]
     pub fn new_fringe(capacity: usize) -> Scheduler {
         assert!(capacity > 0);
         Scheduler {

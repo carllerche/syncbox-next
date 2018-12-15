@@ -37,7 +37,7 @@ pub mod fuzz;
 mod rt;
 pub mod sync;
 pub mod thread;
-mod util;
+// mod util;
 
 pub use fuzz::fuzz;
 
@@ -53,5 +53,5 @@ pub use rt::yield_now;
 
 #[doc(hidden)]
 pub fn __debug_enabled() -> bool {
-    rt::Scheduler::with_execution(|e| e.log)
+    rt::execution(|e| e.log)
 }

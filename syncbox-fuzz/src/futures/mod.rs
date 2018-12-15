@@ -17,12 +17,12 @@ pub mod task {
 
     #[derive(Debug)]
     pub struct Task {
-        thread: rt::ThreadHandle,
+        thread: rt::thread::Id,
     }
 
     pub fn current() -> Task {
         Task {
-            thread: rt::ThreadHandle::current(),
+            thread: rt::thread::Id::current(),
         }
     }
 

@@ -65,6 +65,8 @@ fn atomic_causality_success() {
                 });
             }
 
+            println!("BEFORE SET");
+
             self.guard.store(1, Release);
         }
 
@@ -81,7 +83,12 @@ fn atomic_causality_success() {
         }
     }
 
-    syncbox_fuzz::fuzz(|| {
+    let mut fuzz = syncbox_fuzz::fuzz::Builder::new();
+    fuzz.log = true;
+    fuzz.checkpoint_interval = 1;
+
+    fuzz.fuzz(|| {
+        println!("MAIN TH");
         let chan = Arc::new(Chan {
             data: CausalCell::new(0),
             guard: AtomicUsize::new(0),
@@ -89,7 +96,10 @@ fn atomic_causality_success() {
 
         let th = {
             let chan = chan.clone();
-            thread::spawn(move || chan.set())
+            thread::spawn(move || {
+                println!("SIDE TH 1");
+                chan.set();
+            })
         };
 
         // Try getting before joining

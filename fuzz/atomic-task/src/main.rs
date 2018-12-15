@@ -27,7 +27,11 @@ struct Chan {
 }
 
 fn main() {
-    fuzz_future(|| {
+    let mut fuzz = syncbox_fuzz::fuzz::Builder::new();
+    fuzz.runtime = syncbox_fuzz::fuzz::Runtime::Fringe;
+    fuzz.checkpoint_interval = 10;
+
+    fuzz.fuzz_future(|| {
         let chan = Arc::new(Chan {
             num: AtomicUsize::new(0),
             task: AtomicTask::new(),

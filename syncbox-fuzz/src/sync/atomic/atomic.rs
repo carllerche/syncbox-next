@@ -1,4 +1,5 @@
-use rt::{self, Actor, Execution, Synchronize};
+use rt::{self, thread, Execution, Synchronize};
+use rt::object::{self, Object};
 
 use std::cell::RefCell;
 use std::sync::atomic::Ordering;
@@ -7,6 +8,7 @@ use std::sync::atomic::Ordering;
 #[derive(Debug)]
 pub struct Atomic<T> {
     writes: RefCell<Vec<Write<T>>>,
+    object: object::Id,
 }
 
 #[derive(Debug)]
@@ -35,32 +37,33 @@ where
         rt::execution(|execution| {
             let writes = vec![Write {
                 value,
-                sync: Synchronize::new(execution.max_threads, &mut execution.arena),
+                sync: Synchronize::new(execution.max_threads),
                 first_seen: FirstSeen::new(execution),
                 seq_cst: false,
             }];
 
             Atomic {
                 writes: RefCell::new(writes),
+                object: execution.objects.insert(Object::atomic()),
             }
         })
     }
 
     pub fn load(&self, order: Ordering) -> T {
-        rt::branch();
+        self.object.branch_load();
         let mut writes = self.writes.borrow_mut();
 
         synchronize(|execution| {
             // Pick a write that satisfies causality and specified ordering.
             let write = pick_write(&mut writes[..], execution, order);
-            write.first_seen.touch(&execution.threads.actor());
+            write.first_seen.touch(&execution.threads);
             write.sync.sync_read(execution, order);
             write.value
         })
     }
 
     pub fn store(&self, val: T, order: Ordering) {
-        rt::branch();
+        self.object.branch_store();
         let mut writes = self.writes.borrow_mut();
 
         synchronize(|execution| {
@@ -75,13 +78,13 @@ where
     where
         F: FnOnce(T) -> T,
     {
-        rt::branch();
+        self.object.branch_rmw();
         let mut writes = self.writes.borrow_mut();
 
         synchronize(|execution| {
             let old = {
                 let write = writes.last_mut().unwrap();
-                write.first_seen.touch(&execution.threads.actor());
+                write.first_seen.touch(&execution.threads);
                 write.sync.sync_read(execution, order);
                 write.value
             };
@@ -118,13 +121,13 @@ where
         failure: Ordering
     ) -> Result<T, T>
     {
-        rt::branch();
+        self.object.branch_rmw();
         let mut writes = self.writes.borrow_mut();
 
         synchronize(|execution| {
             {
                 let write = writes.last_mut().unwrap();
-                write.first_seen.touch(&execution.threads.actor());
+                write.first_seen.touch(&execution.threads);
 
                 if write.value != current {
                     write.sync.sync_read(execution, failure);
@@ -159,7 +162,7 @@ fn pick_write<'a, T>(
                 let ret = in_causality;
 
                 in_causality |= is_seq_cst(order) && write.seq_cst;
-                in_causality |= write.first_seen.is_seen_by(&threads.actor());
+                in_causality |= write.first_seen.is_seen_by(&threads);
 
                 !ret
             })
@@ -177,7 +180,7 @@ fn do_write<T>(
 {
     let mut write = Write {
         value,
-        sync: writes.last().unwrap().sync.clone_with(&mut execution.arena),
+        sync: writes.last().unwrap().sync.clone(),
         first_seen: FirstSeen::new(execution),
         seq_cst: is_seq_cst(order),
     };
@@ -192,7 +195,7 @@ where
 {
     rt::execution(|execution| {
         let ret = f(execution);
-        execution.threads.actor().inc();
+        execution.threads.active_causality_inc();
         ret
     })
 }
@@ -207,26 +210,26 @@ fn is_seq_cst(order: Ordering) -> bool {
 impl FirstSeen {
     fn new(execution: &mut Execution) -> FirstSeen {
         let mut first_seen = FirstSeen(vec![]);
-        first_seen.touch(&execution.threads.actor());
+        first_seen.touch(&execution.threads);
 
         first_seen
     }
 
-    fn touch(&mut self, actor: &Actor) {
-        let happens_before = actor.happens_before();
+    fn touch(&mut self, threads: &thread::Set) {
+        let happens_before = &threads.active().causality;
 
         if self.0.len() < happens_before.len() {
             self.0.resize(happens_before.len(), None);
         }
 
-        if self.0[actor.id()].is_none() {
-            self.0[actor.id()] = Some(actor.self_version());
+        if self.0[threads.active_id().as_usize()].is_none() {
+            self.0[threads.active_id().as_usize()] = Some(threads.active_atomic_version());
         }
     }
 
-    fn is_seen_by(&self, actor: &Actor) -> bool {
-        for (thread_id, version) in actor.happens_before().versions() {
-            let seen = self.0.get(thread_id)
+    fn is_seen_by(&self, threads: &thread::Set) -> bool {
+        for (thread_id, version) in threads.active().causality.versions() {
+            let seen = self.0.get(thread_id.as_usize())
                 .and_then(|maybe_version| *maybe_version)
                 .map(|v| v <= version)
                 .unwrap_or(false);

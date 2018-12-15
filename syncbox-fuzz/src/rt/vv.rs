@@ -1,43 +1,34 @@
-use rt::ThreadSet;
-use rt::arena::{self, Arena};
+use rt::thread;
 
 use std::cmp;
 use std::ops;
 
-#[derive(Debug, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VersionVec {
-    versions: arena::Slice<usize>,
-}
-
-#[derive(Debug)]
-pub struct Actor<'a> {
-    vv: &'a mut VersionVec,
-    id: usize,
+    versions: Box<[usize]>,
 }
 
 impl VersionVec {
-    pub fn new(max_threads: usize, arena: &mut Arena) -> VersionVec {
+    pub fn new(max_threads: usize) -> VersionVec {
         VersionVec {
-            versions: arena.slice(max_threads),
+            versions: vec![0; max_threads].into_boxed_slice(),
         }
     }
 
-    /// Returns a new `VersionVec` that represents the very first event in the execution.
-    pub fn root(max_threads: usize, arena: &mut Arena) -> VersionVec {
-        let mut vv = VersionVec::new(max_threads, arena);
-        vv[0] += 1;
-        vv
-    }
-
-    // TODO: Iterate over `(ThreadId, Version)`
-    pub fn versions<'a>(&'a self) -> impl Iterator<Item = (usize, usize)> + 'a {
+    pub fn versions<'a>(&'a self) -> impl Iterator<Item = (thread::Id, usize)> + 'a {
         self.versions.iter()
-            .map(|v| *v)
             .enumerate()
+            .map(|(thread_id, &version)| {
+                (thread::Id::from_usize(thread_id), version)
+            })
     }
 
     pub fn len(&self) -> usize {
         self.versions.len()
+    }
+
+    pub fn inc(&mut self, id: thread::Id) {
+        self.versions[id.as_usize()] += 1;
     }
 
     pub fn join(&mut self, other: &VersionVec) {
@@ -45,54 +36,18 @@ impl VersionVec {
             self.versions[i] = cmp::max(self.versions[i], version);
         }
     }
-
-    pub fn clone_with(&self, arena: &mut arena::Arena) -> Self {
-        VersionVec {
-            versions: self.versions.clone_with(arena),
-        }
-    }
 }
 
-impl ops::Index<usize> for VersionVec {
+impl ops::Index<thread::Id> for VersionVec {
     type Output = usize;
 
-    fn index(&self, index: usize) -> &usize {
-        self.versions.index(index)
+    fn index(&self, index: thread::Id) -> &usize {
+        self.versions.index(index.as_usize())
     }
 }
 
-impl ops::IndexMut<usize> for VersionVec {
-    fn index_mut(&mut self, index: usize) -> &mut usize {
-        self.versions.index_mut(index)
-    }
-}
-
-impl<'a> Actor<'a> {
-    pub(super) fn new(ctx: &'a mut ThreadSet) -> Actor<'a> {
-        Actor {
-            vv: &mut ctx.threads[ctx.active].causality,
-            id: ctx.active,
-        }
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    pub fn happens_before(&self) -> &VersionVec {
-        &self.vv
-    }
-
-    // TODO: rename `version`
-    pub fn self_version(&self) -> usize {
-        self.vv[self.id]
-    }
-
-    pub fn inc(&mut self) {
-        self.vv.versions[self.id] += 1;
-    }
-
-    pub fn join(&mut self, other: &VersionVec) {
-        self.vv.join(other);
+impl ops::IndexMut<thread::Id> for VersionVec {
+    fn index_mut(&mut self, index: thread::Id) -> &mut usize {
+        self.versions.index_mut(index.as_usize())
     }
 }

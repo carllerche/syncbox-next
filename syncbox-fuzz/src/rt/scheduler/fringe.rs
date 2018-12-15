@@ -1,4 +1,4 @@
-use rt::{Execution, FnBox};
+use rt::{thread, Execution, FnBox};
 
 use fringe::{
     Generator,
@@ -78,22 +78,34 @@ impl Scheduler {
         self.threads[0].resume(Some(Box::new(f)));
 
         loop {
-            if execution.schedule() {
-                // Execution complete
+            if !execution.threads.is_active() {
                 return;
             }
 
-            self.tick(execution);
+            let active_thread = execution.threads.active_id();
+
+            self.tick(active_thread, execution);
+
+            while let Some(th) = self.queued_spawn.pop_front() {
+                let thread_id = self.next_thread;
+                self.next_thread += 1;
+
+                self.threads[thread_id].resume(Some(th));
+            }
         }
     }
 
-    fn tick(&mut self, execution: &mut Execution) {
+    fn tick(&mut self, thread: thread::Id, execution: &mut Execution) {
         let mut state = State {
             execution: execution,
             queued_spawn: &mut self.queued_spawn,
         };
 
-        tick(&mut state, &mut self.threads, &mut self.next_thread);
+        let threads = &mut self.threads;
+
+        STATE.set(unsafe { transmute_lt(&mut state) }, || {
+            threads[thread.as_usize()].resume(None);
+        });
     }
 }
 
@@ -118,27 +130,6 @@ impl fmt::Debug for Scheduler {
     }
 }
 
-fn tick(
-    state: &mut State,
-    threads: &mut Vec<Thread>,
-    next_thread: &mut usize)
-{
-    let active_thread = state.execution.threads.active;
-
-    STATE.set(unsafe { transmute_lt(state) }, || {
-        threads[active_thread].resume(None);
-    });
-
-    while let Some(th) = state.queued_spawn.pop_front() {
-        let thread_id = *next_thread;
-        *next_thread += 1;
-
-        assert!(state.execution.threads.threads[thread_id].is_runnable());
-
-        threads[thread_id].resume(Some(th));
-    }
-}
-
 fn spawn_threads(n: usize) -> Vec<Thread> {
     (0..n).map(|_| {
         let stack = OsStack::new(STACK_SIZE).unwrap();
@@ -159,6 +150,7 @@ fn spawn_threads(n: usize) -> Vec<Thread> {
 
             loop {
                 let f: Option<Box<FnBox>> = suspend();
+                assert!(f.is_some());
                 Scheduler::switch();
                 f.unwrap().call();
             }

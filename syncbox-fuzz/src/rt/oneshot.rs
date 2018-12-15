@@ -1,4 +1,4 @@
-use rt::{self, ThreadHandle};
+use rt::{self, thread};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,7 +12,7 @@ pub struct Receiver<T> {
 }
 
 struct Inner<T> {
-    rx: Option<ThreadHandle>,
+    rx: Option<thread::Id>,
     value: Option<T>,
 }
 
@@ -50,7 +50,7 @@ impl<T> Receiver<T> {
                 return value;
             }
 
-            inner.rx = Some(ThreadHandle::current());
+            inner.rx = Some(thread::Id::current());
         }
 
         rt::park();

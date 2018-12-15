@@ -1,17 +1,18 @@
-pub mod arena;
+pub(crate) mod arena;
 mod execution;
 mod fn_box;
-pub mod oneshot;
+pub(crate) mod object;
+pub(crate) mod oneshot;
 mod path;
 mod scheduler;
 mod synchronize;
+pub(crate) mod thread;
 mod vv;
 
 use self::fn_box::FnBox;
 pub(crate) use self::synchronize::Synchronize;
-pub(crate) use self::execution::{ThreadHandle, ThreadSet};
 pub(crate) use self::path::Path;
-pub(crate) use self::vv::{Actor, VersionVec};
+pub(crate) use self::vv::VersionVec;
 
 pub(crate) use self::execution::Execution;
 pub(crate) use self::scheduler::Scheduler;
@@ -20,8 +21,8 @@ pub fn spawn<F>(f: F)
 where
     F: FnOnce() + 'static,
 {
-    Scheduler::with_execution(|execution| {
-        execution.create_thread();
+    execution(|execution| {
+        execution.new_thread();
     });
 
     Scheduler::spawn(Box::new(move || {
@@ -33,24 +34,42 @@ where
 
 /// Marks the current thread as blocked
 pub fn park() {
-    Scheduler::with_execution(|execution| {
+    execution(|execution| {
         execution.threads.active_mut().set_blocked();
+        execution.threads.active_mut().operation = None;
+        execution.schedule()
     });
 
     Scheduler::switch();
 }
 
 /// Add an execution branch point.
-pub fn branch() {
-    Scheduler::switch();
+fn branch<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Execution) -> R,
+{
+    let (ret, switch) = execution(|execution| {
+        let ret = f(execution);
+        (ret, execution.schedule())
+    });
+
+    if switch {
+        Scheduler::switch();
+    }
+
+    ret
 }
 
 pub fn yield_now() {
-    Scheduler::with_execution(|execution| {
+    let switch = execution(|execution| {
         execution.threads.active_mut().set_yield();
+        execution.threads.active_mut().operation = None;
+        execution.schedule()
     });
 
-    Scheduler::switch();
+    if switch {
+        Scheduler::switch();
+    }
 }
 
 /// Critical section, may not branch.
@@ -62,7 +81,7 @@ where
 
     impl Drop for Reset {
         fn drop(&mut self) {
-            Scheduler::with_execution(|execution| {
+            execution(|execution| {
                 execution.unset_critical();
             });
         }
@@ -70,7 +89,7 @@ where
 
     let _reset = Reset;
 
-    Scheduler::with_execution(|execution| {
+    execution(|execution| {
         execution.set_critical();
     });
 
@@ -82,13 +101,6 @@ where
     F: FnOnce(&mut Execution) -> R
 {
     Scheduler::with_execution(f)
-}
-
-pub fn seq_cst() {
-    branch();
-    Scheduler::with_execution(|execution| {
-        execution.seq_cst();
-    });
 }
 
 if_futures! {
@@ -106,7 +118,7 @@ if_futures! {
                 return;
             }
 
-            let notified = Scheduler::with_execution(|execution| {
+            let notified = execution(|execution| {
                 replace(
                     &mut execution.threads.active_mut().notified,
                     false)
@@ -121,7 +133,9 @@ if_futures! {
 }
 
 pub fn thread_done() {
-    Scheduler::with_execution(|execution| {
+    execution(|execution| {
         execution.threads.active_mut().set_terminated();
+        execution.threads.active_mut().operation = None;
+        execution.schedule()
     });
 }

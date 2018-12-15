@@ -10,9 +10,7 @@ pub struct CausalCell<T> {
 impl<T> CausalCell<T> {
     pub fn new(data: T) -> CausalCell<T> {
         let v = rt::execution(|execution| {
-            execution.threads.actor()
-                .happens_before()
-                .clone_with(&mut execution.arena)
+            execution.threads.active().causality.clone()
         });
 
         CausalCell {
@@ -29,9 +27,9 @@ impl<T> CausalCell<T> {
             let v = self.version.borrow();
 
             assert!(
-                *v <= *execution.threads.actor().happens_before(),
+                *v <= execution.threads.active().causality,
                 "cell={:?}; thread={:?}",
-                *v, *execution.threads.actor().happens_before());
+                *v, execution.threads.active().causality);
         });
 
         rt::critical(|| {
@@ -47,11 +45,11 @@ impl<T> CausalCell<T> {
             let mut v = self.version.borrow_mut();
 
             assert!(
-                *v <= *execution.threads.actor().happens_before(),
+                *v <= execution.threads.active().causality,
                 "cell={:?}; thread={:?}",
-                *v, *execution.threads.actor().happens_before());
+                *v, execution.threads.active().causality);
 
-            v.join(execution.threads.actor().happens_before());
+            v.join(&execution.threads.active().causality);
         });
 
         rt::critical(|| {

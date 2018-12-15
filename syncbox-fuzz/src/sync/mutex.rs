@@ -1,76 +1,122 @@
-use rt::{self, ThreadHandle};
+use rt::{self, thread};
+use rt::object::{self, Object};
 
-use std::cell::{UnsafeCell, Cell, RefCell};
-use std::collections::VecDeque;
+use std::cell::{Cell, RefCell, RefMut};
+use std::ops;
 use std::sync::LockResult;
 
 pub struct Mutex<T> {
     #[allow(unused)]
-    data: UnsafeCell<T>,
-    locked: Cell<Option<ThreadHandle>>,
-    waiters: RefCell<VecDeque<ThreadHandle>>,
+    data: RefCell<T>,
+    lock: Cell<Option<thread::Id>>,
+    object: object::Id,
 }
 
 pub struct MutexGuard<'a, T: 'a> {
     lock: &'a Mutex<T>,
+    data: Option<RefMut<'a, T>>,
 }
 
 impl<T> Mutex<T> {
     pub fn new(data: T) -> Mutex<T> {
-        Mutex {
-            data: UnsafeCell::new(data),
-            locked: Cell::new(None),
-            waiters: RefCell::new(VecDeque::new()),
-        }
+        rt::execution(|execution| {
+            Mutex {
+                data: RefCell::new(data),
+                lock: Cell::new(None),
+                object: execution.objects.insert(Object::mutex()),
+            }
+        })
     }
 }
 
 impl<T> Mutex<T> {
     pub fn lock(&self) -> LockResult<MutexGuard<T>> {
-        let guard = MutexGuard {
-            lock: self,
-        };
+        self.acquire();
 
-        guard.acquire(ThreadHandle::current());
-        Ok(guard)
+        Ok(MutexGuard {
+            lock: self,
+            data: Some(self.data.borrow_mut()),
+        })
     }
 
-    pub(super) fn owner(&self) -> Option<ThreadHandle> {
-        self.locked.get()
+    pub(crate) fn acquire(&self) {
+        self.object.branch_acquire(self.is_locked());
+
+        rt::execution(|execution| {
+            execution.seq_cst();
+
+            let thread_id = execution.threads.active_id();
+
+            // Block all threads attempting to acquire the mutex
+            for (id, thread) in execution.threads.iter_mut() {
+                if id == thread_id {
+                    continue;
+                }
+
+                let object_id = thread.operation.as_ref()
+                    .map(|operation| operation.object_id());
+
+                if object_id == Some(self.object) {
+                    thread.set_blocked();
+                }
+            }
+
+            // Set the lock to the current thread
+            self.lock.set(Some(thread_id));
+        });
+    }
+
+    pub(crate) fn release(&self) {
+        self.lock.set(None);
+
+        rt::execution(|execution| {
+            execution.seq_cst();
+
+            let thread_id = execution.threads.active_id();
+
+            for (id, thread) in execution.threads.iter_mut() {
+                if id == thread_id {
+                    continue;
+                }
+
+                let object_id = thread.operation.as_ref()
+                    .map(|operation| operation.object_id());
+
+                if object_id == Some(self.object) {
+                    thread.set_runnable();
+                }
+            }
+        });
+    }
+
+    fn is_locked(&self) -> bool {
+        self.lock.get().is_some()
     }
 }
 
 impl<'a, T: 'a> MutexGuard<'a, T> {
-    pub(super) fn mutex(&self) -> &Mutex<T> {
-        self.lock
+    pub(crate) fn release(&mut self) {
+        self.data = None;
+        self.lock.release();
     }
 
-    pub(super) fn acquire(&self, th: ThreadHandle) {
-        rt::branch();
-
-        assert_ne!(self.lock.locked.get(), Some(th), "cannot re-enter mutex");
-
-        if self.lock.locked.get().is_none() {
-            self.lock.locked.set(Some(th));
-        } else {
-            self.lock.waiters.borrow_mut()
-                .push_back(th);
-        }
-
-        while self.lock.locked.get() != Some(th) {
-            rt::park();
-        }
+    pub(crate) fn acquire(&mut self) {
+        self.lock.acquire();
+        self.data = Some(self.lock.data.borrow_mut());
     }
+}
 
-    pub(super) fn release(&self) {
-        let next = self.lock.waiters.borrow_mut().pop_front();
-        self.lock.locked.set(next);
+impl<'a, T> ops::Deref for MutexGuard<'a, T> {
+    type Target = T;
 
-        if let Some(th) = next {
-            th.unpark();
-        }
+    fn deref(&self) -> &T {
+        self.data.as_ref().unwrap().deref()
+    }
+}
 
-        rt::branch();
+impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.data.as_mut().unwrap().deref_mut()
     }
 }
 

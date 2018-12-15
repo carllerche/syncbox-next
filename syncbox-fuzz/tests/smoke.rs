@@ -35,10 +35,14 @@ fn fuzz_valid() {
         }
     }
 
-    syncbox_fuzz::fuzz(|| {
+    let mut fuzz = syncbox_fuzz::fuzz::Builder::new();
+    fuzz.log = true;
+    fuzz.checkpoint_interval = 1;
+
+    fuzz.fuzz(|| {
         let inc = Arc::new(Inc::new());
 
-        let ths: Vec<_> = (0..2).map(|i| {
+        let ths: Vec<_> = (0..2).map(|_| {
             let inc = inc.clone();
             thread::spawn(move || {
                 inc.inc();
@@ -92,7 +96,11 @@ fn checks_fail() {
 #[test]
 #[should_panic]
 fn check_ordering() {
-    syncbox_fuzz::fuzz(|| {
+    let mut fuzz = syncbox_fuzz::fuzz::Builder::new();
+    fuzz.log = true;
+    fuzz.checkpoint_interval = 1;
+
+    fuzz.fuzz(|| {
         let n1 = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
         let n2 = n1.clone();
 

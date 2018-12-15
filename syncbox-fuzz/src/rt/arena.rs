@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use std::alloc::Layout;
 use std::cell::Cell;
 use std::cmp;

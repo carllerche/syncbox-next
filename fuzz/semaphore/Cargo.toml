@@ -8,4 +8,4 @@ publish = false
 cfg-if = "0.1.6"
 crossbeam-utils = "0.6.1"
 futures = "0.1.25"
-syncbox-fuzz = { path = "../../syncbox-fuzz", features = ["futures"] }
+syncbox-fuzz = { path = "../../syncbox-fuzz", features = ["futures", "fringe"] }

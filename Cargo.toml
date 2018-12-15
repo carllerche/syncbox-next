@@ -8,7 +8,7 @@ members = [
   "syncbox-fuzz",
 
   # Fuzzing
-  "fuzz/fuzz-atomic-task",
+  "fuzz/atomic-task",
   "fuzz/semaphore",
   "fuzz/parker",
 ]

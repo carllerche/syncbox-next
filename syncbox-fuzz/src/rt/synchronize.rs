@@ -1,17 +1,16 @@
 use rt::{Execution, VersionVec};
-use rt::arena::Arena;
 
 use std::sync::atomic::Ordering::{self, *};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Synchronize {
     happens_before: VersionVec,
 }
 
 impl Synchronize {
-    pub fn new(max_threads: usize, arena: &mut Arena) -> Self {
+    pub fn new(max_threads: usize) -> Self {
         let happens_before =
-            VersionVec::new(max_threads, arena);
+            VersionVec::new(max_threads);
 
         Synchronize {
             happens_before,
@@ -50,15 +49,11 @@ impl Synchronize {
         }
     }
 
-    pub fn clone_with(&self, arena: &mut Arena) -> Synchronize {
-        Synchronize { happens_before: self.happens_before.clone_with(arena) }
-    }
-
     fn sync_acq(&mut self, execution: &mut Execution) {
-        execution.threads.actor().join(&self.happens_before);
+        execution.threads.active_mut().causality.join(&self.happens_before);
     }
 
     fn sync_rel(&mut self, execution: &mut Execution) {
-        self.happens_before.join(execution.threads.actor().happens_before());
+        self.happens_before.join(&execution.threads.active().causality);
     }
 }

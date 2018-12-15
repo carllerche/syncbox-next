@@ -61,6 +61,8 @@ fn main() {
     let mut fuzz = fuzz::Builder::new();
     // fuzz.log = true;
     // fuzz.checkpoint_file("syncbox-fuzz.txt");
+    fuzz.checkpoint_interval = 1_000;
+    fuzz.runtime = fuzz::Runtime::Fringe;
 
     fuzz.fuzz_future(|| {
         let shared = Arc::new(Shared {

@@ -1,6 +1,7 @@
 #![allow(warnings)]
 
 use rt::{Execution, FnBox};
+use rt::thread::Id as ThreadId;
 use std::collections::VecDeque;
 use std::fmt;
 use std::mem;
@@ -131,23 +132,22 @@ impl Scheduler {
                 let execution = e.execution;
 
                 unsafe {
-                    if (*execution).schedule() {
+                    if !(*execution).threads.is_active() {
                         return;
                     }
 
-                    // println!("=== THREAD {} ===", (*execution).active_thread);
-                    (*execution).threads.active
+                    (*execution).threads.active_id()
                 }
             };
 
-            if state.id == active_id {
+            if state.id == active_id.as_usize() {
                 return;
             }
 
             // Notify the thread
-            state.shared.active_thread.store(active_id, Release);
-            drop(state.shared.threads[active_id].lock().unwrap());
-            state.shared.condvars[active_id].notify_one();
+            state.shared.active_thread.store(active_id.as_usize(), Release);
+            drop(state.shared.threads[active_id.as_usize()].lock().unwrap());
+            state.shared.condvars[active_id.as_usize()].notify_one();
 
             if release_lock {
                 return;

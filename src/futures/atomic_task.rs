@@ -1,6 +1,7 @@
 cfg_if! {
     if #[cfg(fuzz)] {
         use syncbox_fuzz::{
+            futures::task::{self, Task},
             sync::{
                 CausalCell,
                 atomic::AtomicUsize,
@@ -8,11 +9,10 @@ cfg_if! {
         };
     } else {
         use CausalCell;
+        use _futures::task::{self, Task};
         use std::sync::atomic::AtomicUsize;
     }
 }
-
-use _futures::task::{self, Task};
 
 use std::fmt;
 use std::sync::atomic::Ordering::{Acquire, Release, AcqRel};

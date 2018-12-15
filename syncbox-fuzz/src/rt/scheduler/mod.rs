@@ -132,6 +132,7 @@ fn set_generator() {
     KIND.with(|c| c.set(Generator(())))
 }
 
+#[cfg(feature = "fringe")]
 fn set_fringe() {
     KIND.with(|c| c.set(Fringe(())))
 }
